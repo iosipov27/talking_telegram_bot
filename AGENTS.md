@@ -15,6 +15,9 @@ Follow rules exactly. Do not reinterpret.
 - Use the `python-telegram-bot` library for Telegram communication in this repository.
 - Use https://python-telegram-bot.org/ as the primary source of documentation and examples.
 - Do not add alternative Telegram libraries unless the user explicitly asks for them.
+- Do not add a database or any persistent storage layer unless the user explicitly asks for it.
+- Treat every incoming Telegram message as fully independent from previous messages.
+- Do not store or send conversation history to the LLM.
 
 ---
 
@@ -172,6 +175,15 @@ Controller must:
 * Polling only
 * Single text handler
 * Ignore non-text input
+* Process each text message independently without chat memory
+
+---
+
+## Persistence
+
+* No database
+* No message history storage
+* No in-memory conversation state that affects future replies
 
 ---
 
