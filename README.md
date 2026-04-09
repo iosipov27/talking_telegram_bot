@@ -12,6 +12,7 @@ The bot does not use a database. It does not store chat history. Each Telegram m
 - Handles LLM and network errors with a safe Telegram reply.
 - Runs in Telegram polling mode.
 - Writes logs to the console and to `logs/bot.log`.
+- Lets the user list and switch local Ollama models with `/models`.
 
 ## Project Structure
 
@@ -54,6 +55,21 @@ Then run the bot:
 ```
 
 Open Telegram, send a text message to your bot, and wait for the reply.
+
+## Select A Model
+
+The default model is configured by `OLLAMA_MODEL` in `.env`.
+
+While the bot is running, send this Telegram command:
+
+```text
+/models
+```
+
+The bot asks Ollama for locally available models and sends a list of buttons.
+Tap a model button to make it the current model.
+
+Model selection is kept only in process memory. If the bot restarts, it uses `OLLAMA_MODEL` from `.env` again.
 
 ## Logs
 

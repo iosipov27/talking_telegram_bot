@@ -44,6 +44,24 @@ class OllamaClient:
             raise OllamaClientError("Ollama request failed.") from exc
         return AssistantMessage(text=self._extract_content(self._read_json(response)))
 
+    async def list_model_names(self) -> list[str]:
+        try:
+            response = await self._http_client.get(f"{self._base_url}/api/tags")
+            response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise OllamaTimeoutError("Ollama model list request timed out.") from exc
+        except httpx.HTTPStatusError as exc:
+            raise OllamaClientError("Ollama returned an unsuccessful status.") from exc
+        except httpx.HTTPError as exc:
+            raise OllamaClientError("Ollama model list request failed.") from exc
+        return self._extract_model_names(self._read_json(response))
+
+    def get_current_model(self) -> str:
+        return self._model
+
+    def switch_model(self, model_name: str) -> None:
+        self._model = model_name
+
     async def close(self) -> None:
         if self._owns_http_client:
             await self._http_client.aclose()
@@ -71,3 +89,22 @@ class OllamaClient:
         if isinstance(content, str):
             return content
         raise OllamaClientError("Ollama returned an invalid response payload.")
+
+    def _extract_model_names(self, data: Any) -> list[str]:
+        if not isinstance(data, dict):
+            raise OllamaClientError("Ollama returned an invalid response payload.")
+        models = data.get("models")
+        if not isinstance(models, list):
+            raise OllamaClientError("Ollama returned an invalid response payload.")
+        return self._read_names(models)
+
+    def _read_names(self, models: list[Any]) -> list[str]:
+        names = []
+        for model in models:
+            if not isinstance(model, dict):
+                raise OllamaClientError("Ollama returned an invalid model payload.")
+            name = model.get("name")
+            if not isinstance(name, str) or not name:
+                raise OllamaClientError("Ollama returned an invalid model name.")
+            names.append(name)
+        return sorted(names)

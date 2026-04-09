@@ -4,12 +4,23 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from talking_telegram_bot.clients.ollama_client import OllamaClient
 from talking_telegram_bot.config.settings import Settings, SettingsError, load_settings
-from talking_telegram_bot.controllers.telegram_controller import TelegramMessageController
+from talking_telegram_bot.controllers.telegram_controller import (
+    MODEL_CALLBACK_PREFIX,
+    TelegramMessageController,
+)
 from talking_telegram_bot.services.message_service import MessageService
+from talking_telegram_bot.services.model_service import ModelService
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOG_FILE_PATH = PROJECT_ROOT / "logs" / "bot.log"
@@ -32,7 +43,8 @@ def main() -> None:
         timeout_seconds=settings.ollama_timeout_seconds,
     )
     message_service = MessageService(ollama_client)
-    controller = TelegramMessageController(message_service)
+    model_service = ModelService(ollama_client)
+    controller = TelegramMessageController(message_service, model_service)
     application = _build_application(settings, controller, ollama_client)
     application.run_polling()
 
@@ -47,7 +59,19 @@ def _build_application(
     builder = builder.concurrent_updates(settings.telegram_concurrent_updates)
     builder = builder.post_shutdown(_build_shutdown_callback(ollama_client))
     application = builder.build()
-    application.add_handler(MessageHandler(filters.TEXT, controller.handle_text_message))
+    application.add_handler(CommandHandler("models", controller.handle_models_command))
+    application.add_handler(
+        CallbackQueryHandler(
+            controller.handle_model_selection,
+            pattern=f"^{MODEL_CALLBACK_PREFIX}",
+        ),
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            controller.handle_text_message,
+        ),
+    )
     return application
 
 

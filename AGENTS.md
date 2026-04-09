@@ -20,6 +20,8 @@ Follow rules exactly. Do not reinterpret.
 - Do not store or send conversation history to the LLM.
 - Never log Telegram bot tokens, LLM credentials, `.env` values, or full URLs that contain secrets.
 - Write application logs to both the console and `logs/bot.log`.
+- Allow `/models` as a Telegram control command for listing Ollama models and switching the runtime model.
+- The default LLM model must come from `.env`; runtime selection may override it until the process stops.
 
 ---
 
@@ -175,7 +177,8 @@ Controller must:
 ## Telegram Mode
 
 * Polling only
-* Single text handler
+* Single text handler for regular user messages
+* Explicit command/callback handlers are allowed for bot controls
 * Ignore non-text input
 * Process each text message independently without chat memory
 
@@ -186,6 +189,7 @@ Controller must:
 * No database
 * No message history storage
 * No in-memory conversation state that affects future replies
+* Exception: current LLM model may be stored in memory for runtime model switching
 
 ---
 
