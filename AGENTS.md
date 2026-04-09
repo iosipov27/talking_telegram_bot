@@ -18,6 +18,8 @@ Follow rules exactly. Do not reinterpret.
 - Do not add a database or any persistent storage layer unless the user explicitly asks for it.
 - Treat every incoming Telegram message as fully independent from previous messages.
 - Do not store or send conversation history to the LLM.
+- Never log Telegram bot tokens, LLM credentials, `.env` values, or full URLs that contain secrets.
+- Write application logs to both the console and `logs/bot.log`.
 
 ---
 
