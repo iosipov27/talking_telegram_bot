@@ -15,26 +15,26 @@ from telegram.ext import (
 
 from talking_telegram_bot.clients.ollama_client import OllamaClient
 from talking_telegram_bot.config.settings import Settings, SettingsError, load_settings
+from talking_telegram_bot.constants.log_events import SETTINGS_LOAD_FAILED
+from talking_telegram_bot.constants.logging_settings import (
+    LOG_BACKUP_COUNT,
+    LOG_FILE_PATH,
+    LOG_FORMAT,
+    LOG_MAX_BYTES,
+)
+from talking_telegram_bot.constants.telegram import MODEL_CALLBACK_PREFIX, MODELS_COMMAND
 from talking_telegram_bot.controllers.telegram_controller import (
-    MODEL_CALLBACK_PREFIX,
     TelegramMessageController,
 )
 from talking_telegram_bot.services.message_service import MessageService
 from talking_telegram_bot.services.model_service import ModelService
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-LOG_FILE_PATH = PROJECT_ROOT / "logs" / "bot.log"
-LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-LOG_MAX_BYTES = 1_000_000
-LOG_BACKUP_COUNT = 5
-
 
 def main() -> None:
     _configure_logging()
     try:
         settings = load_settings()
     except SettingsError:
-        logging.exception("Failed to load application settings.")
+        logging.exception(SETTINGS_LOAD_FAILED)
         raise
 
     ollama_client = OllamaClient(
@@ -59,7 +59,9 @@ def _build_application(
     builder = builder.concurrent_updates(settings.telegram_concurrent_updates)
     builder = builder.post_shutdown(_build_shutdown_callback(ollama_client))
     application = builder.build()
-    application.add_handler(CommandHandler("models", controller.handle_models_command))
+    application.add_handler(
+        CommandHandler(MODELS_COMMAND, controller.handle_models_command),
+    )
     application.add_handler(
         CallbackQueryHandler(
             controller.handle_model_selection,

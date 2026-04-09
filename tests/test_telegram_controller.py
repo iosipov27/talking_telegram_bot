@@ -4,9 +4,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock
 
-from talking_telegram_bot.controllers.telegram_controller import (
-    SAFE_ERROR_MESSAGE,
+from talking_telegram_bot.constants.user_messages import (
+    SAFE_LLM_ERROR_MESSAGE,
     SAFE_MODEL_ERROR_MESSAGE,
+)
+from talking_telegram_bot.controllers.telegram_controller import (
     TelegramMessageController,
 )
 from talking_telegram_bot.services.model_service import AvailableModels, ModelSelectionError
@@ -34,7 +36,7 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         await controller.handle_text_message(update, None)
 
-        message.reply_text.assert_awaited_once_with(SAFE_ERROR_MESSAGE)
+        message.reply_text.assert_awaited_once_with(SAFE_LLM_ERROR_MESSAGE)
 
     async def test_handle_models_command_sends_model_keyboard(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())
