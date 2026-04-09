@@ -79,6 +79,9 @@ Logs are written to two places:
 - `logs/bot.log` for later error analysis.
 
 The log directory is ignored by git.
+Logs include safe event metadata: message received, reply sent, model list requested, model switched, text length, reply length, chat id, user id, and processing time.
+
+Logs do not include Telegram bot tokens, `.env` values, user message text, or LLM reply text.
 
 If the LLM is not available, the bot logs the processing error and replies in Telegram with:
 
