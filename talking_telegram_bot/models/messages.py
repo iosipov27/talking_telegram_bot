@@ -19,6 +19,18 @@ class ChatHistoryEntry:
 
 
 @dataclass(frozen=True)
+class ChatSummary:
+    text: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ChatHistoryLog:
+    summary: ChatSummary | None
+    entries: list[ChatHistoryEntry]
+
+
+@dataclass(frozen=True)
 class ConversationMessage:
     role: str
     content: str

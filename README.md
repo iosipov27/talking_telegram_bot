@@ -12,7 +12,9 @@ The bot does not use a database. It stores per-user chat history as JSON files i
 - Handles LLM and network errors with a safe Telegram reply.
 - Runs in Telegram polling mode.
 - Writes logs to the console and to `logs/bot.log`.
-- Writes the last 10 request and LLM response pairs to per-user JSON files in `logs`.
+- Writes a summary and recent request and LLM response pairs to per-user JSON files in `logs`.
+- Summarizes saved history after 5 pairs and sends the summary with new requests.
+- Keeps summary settings in `talking_telegram_bot/constants/summary_settings.py`.
 - Lets the user list and switch local Ollama models with `/models`.
 
 ## Project Structure
@@ -78,7 +80,7 @@ Logs are written to two places:
 
 - console output while the bot is running;
 - `logs/bot.log` for later error analysis.
-- `logs/chat_history_<user_id>.json` for per-user request and LLM response history.
+- `logs/chat_history_<user_id>.json` for per-user request and LLM response history, plus the latest summary.
 
 The log directory is ignored by git.
 Logs include safe event metadata: message received, reply sent, model list requested, model switched, text length, reply length, chat id, user id, and processing time.
