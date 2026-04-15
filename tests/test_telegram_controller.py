@@ -194,13 +194,16 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
         )
         context = SimpleNamespace(args=["senior", "python", "developer"])
         message_service = Mock()
-        message_service.set_agent_role.return_value = "senior python developer"
+        message_service.update_agent_role = AsyncMock(
+            return_value="senior python developer",
+        )
         controller = TelegramMessageController(message_service, AsyncMock())
 
         await controller.handle_role_command(update, context)
 
-        message_service.set_agent_role.assert_called_once_with(
+        message_service.update_agent_role.assert_awaited_once_with(
             "senior python developer",
+            123,
         )
         message.reply_text.assert_awaited_once_with(
             ROLE_UPDATED_MESSAGE.format(agent_role="senior python developer"),

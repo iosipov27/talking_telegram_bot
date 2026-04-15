@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import UTC, datetime
 
 from talking_telegram_bot.clients.chat_history_client import (
@@ -37,6 +38,10 @@ class AgentRoleSelectionError(RuntimeError):
     """Raised when the runtime agent role is invalid."""
 
 
+class AgentRoleUpdateError(RuntimeError):
+    """Raised when the runtime agent role can not be updated safely."""
+
+
 class MessageService:
     def __init__(
         self,
@@ -70,6 +75,15 @@ class MessageService:
         self._agent_role = self._normalize_agent_role(raw_role)
         return self._agent_role
 
+    async def update_agent_role(self, raw_role: str, user_id: int) -> str:
+        selected_role = self._normalize_agent_role(raw_role)
+        try:
+            await self._chat_history_client.clear_history(user_id)
+        except ChatHistoryClientError as exc:
+            raise AgentRoleUpdateError("Chat history is unavailable.") from exc
+        self._agent_role = selected_role
+        return selected_role
+
     def _normalize_message(self, raw_text: str) -> UserMessage:
         normalized_text = raw_text.strip()
         if normalized_text:
@@ -78,6 +92,15 @@ class MessageService:
 
     def _normalize_agent_role(self, raw_role: str) -> str:
         normalized_role = raw_role.strip()
+        normalized_role = normalized_role.replace("<role>", "")
+        normalized_role = normalized_role.replace("</role>", "")
+        normalized_role = normalized_role.strip()
+        normalized_role = re.sub(
+            r"^ты[\s—-]+",
+            "",
+            normalized_role,
+            flags=re.IGNORECASE,
+        )
         if normalized_role:
             return normalized_role
         raise AgentRoleSelectionError("Agent role is empty.")

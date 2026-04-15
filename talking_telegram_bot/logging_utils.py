@@ -53,14 +53,18 @@ def format_markdown_event(
     title: str,
     rows: Sequence[tuple[str, object]],
     detail_tables: Sequence[MarkdownTable] | None = None,
+    detail_blocks: Sequence[str] | None = None,
 ) -> str:
     sections = [f"### {title}", build_markdown_table(("Field", "Value"), rows)]
-    if detail_tables is None:
+    if detail_tables is None and detail_blocks is None:
         return "\n\n".join(sections)
-    sections.extend(
-        build_markdown_table(table.headers, table.rows)
-        for table in detail_tables
-    )
+    if detail_tables is not None:
+        sections.extend(
+            build_markdown_table(table.headers, table.rows)
+            for table in detail_tables
+        )
+    if detail_blocks is not None:
+        sections.extend(detail_blocks)
     return "\n\n".join(sections)
 
 
@@ -91,3 +95,12 @@ def _escape_markdown_cell(value: object) -> str:
     text = text.replace("|", "\\|")
     text = text.replace("\r", "")
     return text.replace("\n", "<br>")
+
+
+def build_markdown_code_block(
+    title: str,
+    content: str,
+    language: str = "",
+) -> str:
+    language_suffix = language
+    return f"#### {title}\n```{language_suffix}\n{content}\n```"

@@ -65,8 +65,13 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
 
         log_output = "\n".join(logs.output)
         self.assertIn(log_events.OLLAMA_REQUEST_SENT, log_output)
+        self.assertIn("| Method | POST |", log_output)
+        self.assertIn("| URL | http://ollama.local/api/chat |", log_output)
         self.assertIn("| # | Role | Content |", log_output)
         self.assertIn("be concise", log_output)
+        self.assertIn("#### Raw Request JSON", log_output)
+        self.assertIn('"model": "test-model"', log_output)
+        self.assertIn('"stream": false', log_output)
         self.assertIn(log_events.OLLAMA_RESPONSE_RECEIVED, log_output)
         self.assertIn("| Role | Content |", log_output)
         self.assertIn("signal", log_output)
@@ -156,6 +161,41 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
         model_names = await client.list_model_names()
 
         self.assertEqual(model_names, ["model-a", "model-b"])
+        await http_client.aclose()
+
+    async def test_list_model_names_logs_request_and_response(self) -> None:
+        http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={
+                        "models": [
+                            {"name": "model-a"},
+                        ],
+                    },
+                ),
+            ),
+        )
+        client = OllamaClient(
+            base_url="http://ollama.local",
+            model="test-model",
+            timeout_seconds=10,
+            http_client=http_client,
+        )
+
+        with self.assertLogs(
+            "talking_telegram_bot.clients.ollama_client",
+            level="INFO",
+        ) as logs:
+            await client.list_model_names()
+
+        log_output = "\n".join(logs.output)
+        self.assertIn(log_events.OLLAMA_MODEL_LIST_REQUEST_SENT, log_output)
+        self.assertIn("| Method | GET |", log_output)
+        self.assertIn("| URL | http://ollama.local/api/tags |", log_output)
+        self.assertIn(log_events.OLLAMA_MODEL_LIST_RESPONSE_RECEIVED, log_output)
+        self.assertIn("| # | Model |", log_output)
+        self.assertIn("model-a", log_output)
         await http_client.aclose()
 
     async def test_generate_reply_raises_for_invalid_payload(self) -> None:

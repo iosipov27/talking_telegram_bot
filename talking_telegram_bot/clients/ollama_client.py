@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 import httpx
 
 from talking_telegram_bot.constants import log_events
-from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
+from talking_telegram_bot.logging_utils import (
+    MarkdownTable,
+    build_markdown_code_block,
+    format_markdown_event,
+)
 from talking_telegram_bot.models.messages import AssistantMessage, ConversationMessage
 
 logger = logging.getLogger(__name__)
@@ -38,10 +43,11 @@ class OllamaClient:
         messages: list[ConversationMessage],
     ) -> AssistantMessage:
         payload = self._build_payload(messages)
-        logger.info(self._format_request_log(messages, payload["stream"]))
+        url = f"{self._base_url}/api/chat"
+        logger.info(self._format_chat_request_log(url, payload, messages))
         try:
             response = await self._http_client.post(
-                f"{self._base_url}/api/chat",
+                url,
                 json=payload,
             )
             response.raise_for_status()
@@ -58,8 +64,10 @@ class OllamaClient:
         return assistant_message
 
     async def list_model_names(self) -> list[str]:
+        url = f"{self._base_url}/api/tags"
+        logger.info(self._format_model_list_request_log(url))
         try:
-            response = await self._http_client.get(f"{self._base_url}/api/tags")
+            response = await self._http_client.get(url)
             response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise OllamaTimeoutError("Ollama model list request timed out.") from exc
@@ -67,7 +75,9 @@ class OllamaClient:
             raise OllamaClientError("Ollama returned an unsuccessful status.") from exc
         except httpx.HTTPError as exc:
             raise OllamaClientError("Ollama model list request failed.") from exc
-        return self._extract_model_names(self._read_json(response))
+        model_names = self._extract_model_names(self._read_json(response))
+        logger.info(self._format_model_list_response_log(model_names))
+        return model_names
 
     def get_current_model(self) -> str:
         return self._model
@@ -125,17 +135,20 @@ class OllamaClient:
             names.append(name)
         return sorted(names)
 
-    def _format_request_log(
+    def _format_chat_request_log(
         self,
+        url: str,
+        payload: dict[str, Any],
         messages: list[ConversationMessage],
-        stream: bool,
     ) -> str:
         return format_markdown_event(
             log_events.OLLAMA_REQUEST_SENT,
             [
+                ("Method", "POST"),
+                ("URL", url),
                 ("Model", self._model),
                 ("Message Count", len(messages)),
-                ("Stream", stream),
+                ("Stream", payload["stream"]),
             ],
             detail_tables=[
                 MarkdownTable(
@@ -144,6 +157,13 @@ class OllamaClient:
                         (index, message.role, message.content)
                         for index, message in enumerate(messages, start=1)
                     ),
+                ),
+            ],
+            detail_blocks=[
+                build_markdown_code_block(
+                    "Raw Request JSON",
+                    self._format_json(payload),
+                    language="json",
                 ),
             ],
         )
@@ -161,4 +181,35 @@ class OllamaClient:
                     rows=(("assistant", content),),
                 ),
             ],
+        )
+
+    def _format_model_list_request_log(self, url: str) -> str:
+        return format_markdown_event(
+            log_events.OLLAMA_MODEL_LIST_REQUEST_SENT,
+            [
+                ("Method", "GET"),
+                ("URL", url),
+            ],
+        )
+
+    def _format_model_list_response_log(self, model_names: list[str]) -> str:
+        return format_markdown_event(
+            log_events.OLLAMA_MODEL_LIST_RESPONSE_RECEIVED,
+            [("Model Count", len(model_names))],
+            detail_tables=[
+                MarkdownTable(
+                    headers=("#", "Model"),
+                    rows=tuple(
+                        (index, model_name)
+                        for index, model_name in enumerate(model_names, start=1)
+                    ),
+                ),
+            ],
+        )
+
+    def _format_json(self, payload: dict[str, Any]) -> str:
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
         )

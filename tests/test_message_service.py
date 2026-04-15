@@ -8,7 +8,10 @@ from talking_telegram_bot.clients.chat_history_client import (
 )
 from talking_telegram_bot.clients.ollama_client import OllamaClientError
 from talking_telegram_bot.constants.prompt_settings import AGENT_SYSTEM_PROMPT
-from talking_telegram_bot.constants.summary_settings import SUMMARY_TRIGGER_ENTRIES
+from talking_telegram_bot.constants.summary_settings import (
+    SUMMARY_CONTEXT_PREFIX,
+    SUMMARY_TRIGGER_ENTRIES,
+)
 from talking_telegram_bot.models.messages import (
     AssistantMessage,
     ChatHistoryEntry,
@@ -17,6 +20,7 @@ from talking_telegram_bot.models.messages import (
 )
 from talking_telegram_bot.services.message_service import (
     AgentRoleSelectionError,
+    AgentRoleUpdateError,
     MessageProcessingError,
     MessageService,
 )
@@ -145,7 +149,9 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
                 (
                     "system",
-                    "Previous conversation summary:\nUser likes concise answers.",
+                    SUMMARY_CONTEXT_PREFIX.format(
+                        summary="User likes concise answers.",
+                    ),
                 ),
                 ("user", "new question"),
             ],
@@ -182,7 +188,10 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
                         agent_role="опытный программист",
                     ),
                 ),
-                ("system", "Previous conversation summary:\ncompact summary"),
+                (
+                    "system",
+                    SUMMARY_CONTEXT_PREFIX.format(summary="compact summary"),
+                ),
                 ("user", "new question"),
             ],
         )
@@ -267,6 +276,34 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(AgentRoleSelectionError):
             service.set_agent_role("   ")
+
+    def test_set_agent_role_normalizes_wrapped_character_prompt(self) -> None:
+        service = MessageService(AsyncMock(), AsyncMock())
+
+        selected_role = service.set_agent_role(
+            "<role>Ты Людвиг Ван Бетховен - австрийский композитор</role>",
+        )
+
+        self.assertEqual(
+            selected_role,
+            "Людвиг Ван Бетховен - австрийский композитор",
+        )
+
+    async def test_update_agent_role_clears_user_history(self) -> None:
+        service = MessageService(AsyncMock(), AsyncMock())
+
+        selected_role = await service.update_agent_role("историк", 123)
+
+        self.assertEqual(selected_role, "историк")
+        service._chat_history_client.clear_history.assert_awaited_once_with(123)
+
+    async def test_update_agent_role_maps_history_errors(self) -> None:
+        history_client = AsyncMock()
+        history_client.clear_history.side_effect = ChatHistoryClientError("down")
+        service = MessageService(AsyncMock(), history_client)
+
+        with self.assertRaises(AgentRoleUpdateError):
+            await service.update_agent_role("историк", 123)
 
     async def test_generate_reply_raises_for_empty_summary(self) -> None:
         ollama_client = AsyncMock()

@@ -6,6 +6,7 @@ import unittest
 from talking_telegram_bot.logging_utils import (
     MarkdownLogFormatter,
     MarkdownTable,
+    build_markdown_code_block,
     format_markdown_event,
 )
 
@@ -28,6 +29,23 @@ class LoggingUtilsTestCase(unittest.TestCase):
         self.assertIn("hello \\| world", formatted)
         self.assertIn("one<br>two", formatted)
         self.assertIn("| Role | Content |", formatted)
+
+    def test_format_markdown_event_includes_code_blocks(self) -> None:
+        formatted = format_markdown_event(
+            "Example",
+            [("Kind", "request")],
+            detail_blocks=[
+                build_markdown_code_block(
+                    "Payload",
+                    '{"ping": "pong"}',
+                    language="json",
+                ),
+            ],
+        )
+
+        self.assertIn("#### Payload", formatted)
+        self.assertIn("```json", formatted)
+        self.assertIn('{"ping": "pong"}', formatted)
 
     def test_markdown_log_formatter_adds_color_header(self) -> None:
         formatter = MarkdownLogFormatter(use_colors=True)

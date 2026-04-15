@@ -267,6 +267,24 @@ class ChatHistoryClientTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((Path(directory) / "chat_history_123.json").exists())
             self.assertTrue((Path(directory) / "chat_history_456.json").exists())
 
+    async def test_clear_history_removes_user_history_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history_path = Path(directory) / "chat_history_123.json"
+            history_path.write_text(
+                json.dumps(
+                    {
+                        "user_id": 123,
+                        "history": [self._build_entry(1).__dict__],
+                    },
+                ),
+                encoding="utf-8",
+            )
+            client = ChatHistoryClient(Path(directory))
+
+            await client.clear_history(123)
+
+            self.assertFalse(history_path.exists())
+
     def _build_entry(self, index: int) -> ChatHistoryEntry:
         return ChatHistoryEntry(
             request=f"request-{index}",

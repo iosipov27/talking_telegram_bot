@@ -64,6 +64,13 @@ class ChatHistoryClient:
             except (OSError, TypeError, ValueError) as exc:
                 raise ChatHistoryClientError("Failed to write chat summary.") from exc
 
+    async def clear_history(self, user_id: int) -> None:
+        async with self._get_lock(user_id):
+            try:
+                await asyncio.to_thread(self._clear_history_sync, user_id)
+            except OSError as exc:
+                raise ChatHistoryClientError("Failed to clear chat history.") from exc
+
     def _get_lock(self, user_id: int) -> asyncio.Lock:
         if user_id not in self._locks:
             self._locks[user_id] = asyncio.Lock()
@@ -114,6 +121,11 @@ class ChatHistoryClient:
 
     def _build_history_file_path(self, user_id: int) -> Path:
         return self._history_dir / f"chat_history_{user_id}.json"
+
+    def _clear_history_sync(self, user_id: int) -> None:
+        history_file_path = self._build_history_file_path(user_id)
+        if history_file_path.exists():
+            history_file_path.unlink()
 
     def _read_history_payload(self, path: Path, user_id: int) -> dict[str, Any]:
         if not path.exists():

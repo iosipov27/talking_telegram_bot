@@ -24,6 +24,7 @@ from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_ev
 from talking_telegram_bot.services.model_service import ModelSelectionError, ModelService
 from talking_telegram_bot.services.message_service import (
     AgentRoleSelectionError,
+    AgentRoleUpdateError,
     MessageProcessingError,
     MessageService,
 )
@@ -167,9 +168,16 @@ class TelegramMessageController:
         if not requested_role:
             await self._send_reply(message, self._format_role_message())
             return
+        user_id = self._get_user_id(update)
         try:
-            selected_role = self._message_service.set_agent_role(requested_role)
-        except AgentRoleSelectionError as exc:
+            if user_id is None:
+                selected_role = self._message_service.set_agent_role(requested_role)
+            else:
+                selected_role = await self._message_service.update_agent_role(
+                    requested_role,
+                    user_id,
+                )
+        except (AgentRoleSelectionError, AgentRoleUpdateError) as exc:
             logger.warning(log_events.ROLE_UPDATE_FAILED, exc)
             await self._send_reply(message, self._format_role_message())
             return
