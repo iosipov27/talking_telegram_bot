@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 
 from talking_telegram_bot.clients.chat_history_client import (
@@ -5,6 +6,7 @@ from talking_telegram_bot.clients.chat_history_client import (
     ChatHistoryClientError,
 )
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
+from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.summary_settings import (
     SUMMARY_CONTEXT_PREFIX,
     SUMMARY_SYSTEM_PROMPT,
@@ -18,6 +20,8 @@ from talking_telegram_bot.models.messages import (
     ConversationMessage,
     UserMessage,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MessageProcessingError(RuntimeError):
@@ -76,13 +80,24 @@ class MessageService:
         return ChatHistoryLog(summary=summary, entries=[])
 
     async def _generate_summary(self, history_log: ChatHistoryLog) -> str:
+        summary_messages = self._build_summary_messages(history_log)
+        logger.info(
+            log_events.SUMMARY_REQUEST_SENT_TO_LLM,
+            len(history_log.entries),
+            history_log.summary is not None,
+            len(summary_messages),
+        )
         try:
             summary_message = await self._ollama_client.generate_reply(
-                self._build_summary_messages(history_log),
+                summary_messages,
             )
         except OllamaClientError as exc:
             raise MessageProcessingError("LLM is unavailable.") from exc
         summary_text = summary_message.text.strip()
+        logger.info(
+            log_events.SUMMARY_RESPONSE_RECEIVED_FROM_LLM,
+            len(summary_text),
+        )
         if summary_text:
             return summary_text
         raise MessageProcessingError("LLM returned an empty summary.")

@@ -194,6 +194,30 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         summary_messages = ollama_client.generate_reply.await_args_list[0].args[0]
         self.assertIn("previous summary", self._join_contents(summary_messages))
 
+    async def test_generate_reply_logs_summary_request_and_response(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.side_effect = [
+            AssistantMessage(text="summary text"),
+            AssistantMessage(text="final answer"),
+        ]
+        history_client = AsyncMock()
+        history_client.read_history.return_value = ChatHistoryLog(
+            summary=None,
+            entries=self._build_history_entries(SUMMARY_TRIGGER_ENTRIES),
+        )
+        service = MessageService(ollama_client, history_client)
+
+        with self.assertLogs(
+            "talking_telegram_bot.services.message_service",
+            level="INFO",
+        ) as logs:
+            await service.generate_reply("new question", 123)
+
+        self.assertIn("Sending chat history to LLM for summary", logs.output[0])
+        self.assertIn("entry_count=5", logs.output[0])
+        self.assertIn("LLM summary response received", logs.output[1])
+        self.assertIn("summary_length=12", logs.output[1])
+
     async def test_generate_reply_raises_for_empty_summary(self) -> None:
         ollama_client = AsyncMock()
         ollama_client.generate_reply.return_value = AssistantMessage(text="   ")

@@ -9,6 +9,13 @@ UNEXPECTED_TELEGRAM_HANDLER_ERROR = "Unexpected error while handling Telegram me
 TEXT_MESSAGE_PROCESSED = (
     "Telegram text message processed. reply_length=%s elapsed_seconds=%.3f"
 )
+SUMMARY_REQUEST_SENT_TO_LLM = (
+    "Sending chat history to LLM for summary. entry_count=%s "
+    "has_existing_summary=%s message_count=%s"
+)
+SUMMARY_RESPONSE_RECEIVED_FROM_LLM = (
+    "LLM summary response received. summary_length=%s"
+)
 
 MODELS_COMMAND_RECEIVED = "Telegram /models command received. chat_id=%s user_id=%s"
 MODEL_LIST_FAILED = "Failed to list Ollama models: %s"
