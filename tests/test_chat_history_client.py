@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from talking_telegram_bot.clients.chat_history_client import ChatHistoryClient
+from talking_telegram_bot.clients.chat_history_client import (
+    ChatHistoryClient,
+    MAX_CHAT_HISTORY_ENTRIES,
+)
 from talking_telegram_bot.models.messages import ChatHistoryEntry
 
 
@@ -57,6 +60,31 @@ class ChatHistoryClientTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(payload["history"]), 2)
             self.assertEqual(payload["history"][1], entry.__dict__)
 
+    async def test_append_entry_keeps_only_last_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history_path = Path(directory) / "chat_history_123.json"
+            history_path.write_text(
+                json.dumps(
+                    {
+                        "user_id": 123,
+                        "history": [
+                            self._build_entry(index).__dict__
+                            for index in range(MAX_CHAT_HISTORY_ENTRIES)
+                        ],
+                    },
+                ),
+                encoding="utf-8",
+            )
+            new_entry = self._build_entry(MAX_CHAT_HISTORY_ENTRIES)
+            client = ChatHistoryClient(Path(directory))
+
+            await client.append_entry(123, new_entry)
+
+            payload = json.loads(history_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["history"]), MAX_CHAT_HISTORY_ENTRIES)
+            self.assertEqual(payload["history"][0]["request"], "request-1")
+            self.assertEqual(payload["history"][-1], new_entry.__dict__)
+
     async def test_read_entries_returns_existing_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             history_path = Path(directory) / "chat_history_123.json"
@@ -98,6 +126,29 @@ class ChatHistoryClientTestCase(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(entries, [])
 
+    async def test_read_entries_returns_only_last_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history_path = Path(directory) / "chat_history_123.json"
+            history_path.write_text(
+                json.dumps(
+                    {
+                        "user_id": 123,
+                        "history": [
+                            self._build_entry(index).__dict__
+                            for index in range(MAX_CHAT_HISTORY_ENTRIES + 2)
+                        ],
+                    },
+                ),
+                encoding="utf-8",
+            )
+            client = ChatHistoryClient(Path(directory))
+
+            entries = await client.read_entries(123)
+
+            self.assertEqual(len(entries), MAX_CHAT_HISTORY_ENTRIES)
+            self.assertEqual(entries[0].request, "request-2")
+            self.assertEqual(entries[-1].request, "request-11")
+
     async def test_append_entry_keeps_users_in_separate_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             client = ChatHistoryClient(Path(directory))
@@ -112,3 +163,10 @@ class ChatHistoryClientTestCase(unittest.IsolatedAsyncioTestCase):
 
             self.assertTrue((Path(directory) / "chat_history_123.json").exists())
             self.assertTrue((Path(directory) / "chat_history_456.json").exists())
+
+    def _build_entry(self, index: int) -> ChatHistoryEntry:
+        return ChatHistoryEntry(
+            request=f"request-{index}",
+            response=f"response-{index}",
+            created_at=f"2026-04-15T10:{index:02d}:00+00:00",
+        )

@@ -12,7 +12,7 @@ The bot does not use a database. It stores per-user chat history as JSON files i
 - Handles LLM and network errors with a safe Telegram reply.
 - Runs in Telegram polling mode.
 - Writes logs to the console and to `logs/bot.log`.
-- Writes request and LLM response history to per-user JSON files in `logs`.
+- Writes the last 10 request and LLM response pairs to per-user JSON files in `logs`.
 - Lets the user list and switch local Ollama models with `/models`.
 
 ## Project Structure

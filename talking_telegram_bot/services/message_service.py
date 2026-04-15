@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from talking_telegram_bot.clients.chat_history_client import (
     ChatHistoryClient,
     ChatHistoryClientError,
+    MAX_CHAT_HISTORY_ENTRIES,
 )
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
 from talking_telegram_bot.models.messages import (
@@ -57,7 +58,8 @@ class MessageService:
         user_message: UserMessage,
     ) -> list[ConversationMessage]:
         messages = []
-        for entry in history_entries:
+        active_entries = history_entries[-(MAX_CHAT_HISTORY_ENTRIES - 1) :]
+        for entry in active_entries:
             messages.append(ConversationMessage(role="user", content=entry.request))
             messages.append(
                 ConversationMessage(role="assistant", content=entry.response),

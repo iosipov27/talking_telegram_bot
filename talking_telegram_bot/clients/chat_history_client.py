@@ -9,6 +9,8 @@ from typing import Any
 from talking_telegram_bot.constants.logging_settings import CHAT_HISTORY_DIR_PATH
 from talking_telegram_bot.models.messages import ChatHistoryEntry
 
+MAX_CHAT_HISTORY_ENTRIES = 10
+
 
 class ChatHistoryClientError(RuntimeError):
     """Raised when chat history can not be accessed safely."""
@@ -46,14 +48,18 @@ class ChatHistoryClient:
         self._history_dir.mkdir(parents=True, exist_ok=True)
         history_file_path = self._build_history_file_path(user_id)
         history_payload = self._read_history_payload(history_file_path, user_id)
-        self._read_history_entries(history_payload)
-        history_payload["history"].append(asdict(entry))
+        history_entries = self._read_history_entries(history_payload)
+        history_entries.append(entry)
+        history_payload["history"] = [
+            asdict(history_entry)
+            for history_entry in self._limit_history_entries(history_entries)
+        ]
         self._write_history_payload(history_file_path, history_payload)
 
     def _read_entries_sync(self, user_id: int) -> list[ChatHistoryEntry]:
         history_file_path = self._build_history_file_path(user_id)
         history_payload = self._read_history_payload(history_file_path, user_id)
-        return self._read_history_entries(history_payload)
+        return self._limit_history_entries(self._read_history_entries(history_payload))
 
     def _build_history_file_path(self, user_id: int) -> Path:
         return self._history_dir / f"chat_history_{user_id}.json"
@@ -100,6 +106,12 @@ class ChatHistoryClient:
             isinstance(item.get(field_name), str)
             for field_name in ("request", "response", "created_at")
         )
+
+    def _limit_history_entries(
+        self,
+        entries: list[ChatHistoryEntry],
+    ) -> list[ChatHistoryEntry]:
+        return entries[-MAX_CHAT_HISTORY_ENTRIES:]
 
     def _write_history_payload(self, path: Path, payload: dict[str, Any]) -> None:
         temporary_path = path.with_suffix(".tmp")

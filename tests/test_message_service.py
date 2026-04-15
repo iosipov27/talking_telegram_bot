@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock
 
-from talking_telegram_bot.clients.chat_history_client import ChatHistoryClientError
+from talking_telegram_bot.clients.chat_history_client import (
+    ChatHistoryClientError,
+    MAX_CHAT_HISTORY_ENTRIES,
+)
 from talking_telegram_bot.clients.ollama_client import OllamaClientError
 from talking_telegram_bot.models.messages import AssistantMessage, ChatHistoryEntry
 from talking_telegram_bot.services.message_service import (
@@ -65,6 +68,30 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
                 ("user", "new question"),
             ],
         )
+
+    async def test_generate_reply_sends_only_active_messages_to_llm(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.return_value = AssistantMessage(text="new answer")
+        history_client = AsyncMock()
+        history_client.read_entries.return_value = [
+            ChatHistoryEntry(
+                request=f"question-{index}",
+                response=f"answer-{index}",
+                created_at=f"2026-04-15T10:{index:02d}:00+00:00",
+            )
+            for index in range(MAX_CHAT_HISTORY_ENTRIES)
+        ]
+        service = MessageService(ollama_client, history_client)
+
+        await service.generate_reply("new question", 123)
+
+        llm_messages = ollama_client.generate_reply.await_args.args[0]
+        user_contents = [
+            message.content for message in llm_messages if message.role == "user"
+        ]
+        self.assertEqual(len(user_contents), MAX_CHAT_HISTORY_ENTRIES)
+        self.assertEqual(user_contents[0], "question-1")
+        self.assertEqual(user_contents[-1], "new question")
 
     async def test_generate_reply_raises_for_empty_response(self) -> None:
         ollama_client = AsyncMock()
