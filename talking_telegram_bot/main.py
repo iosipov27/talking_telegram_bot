@@ -13,6 +13,7 @@ from telegram.ext import (
     filters,
 )
 
+from talking_telegram_bot.clients.chat_history_client import ChatHistoryClient
 from talking_telegram_bot.clients.ollama_client import OllamaClient
 from talking_telegram_bot.config.settings import Settings, SettingsError, load_settings
 from talking_telegram_bot.constants.log_events import SETTINGS_LOAD_FAILED
@@ -42,7 +43,8 @@ def main() -> None:
         model=settings.ollama_model,
         timeout_seconds=settings.ollama_timeout_seconds,
     )
-    message_service = MessageService(ollama_client)
+    chat_history_client = ChatHistoryClient()
+    message_service = MessageService(ollama_client, chat_history_client)
     model_service = ModelService(ollama_client)
     controller = TelegramMessageController(message_service, model_service)
     application = _build_application(settings, controller, ollama_client)

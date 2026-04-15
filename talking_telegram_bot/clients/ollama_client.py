@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from talking_telegram_bot.models.messages import AssistantMessage, UserMessage
+from talking_telegram_bot.models.messages import AssistantMessage, ConversationMessage
 
 
 class OllamaClientError(RuntimeError):
@@ -28,8 +28,11 @@ class OllamaClient:
         self._owns_http_client = http_client is None
         self._http_client = http_client or httpx.AsyncClient(timeout=timeout_seconds)
 
-    async def generate_reply(self, user_message: UserMessage) -> AssistantMessage:
-        payload = self._build_payload(user_message)
+    async def generate_reply(
+        self,
+        messages: list[ConversationMessage],
+    ) -> AssistantMessage:
+        payload = self._build_payload(messages)
         try:
             response = await self._http_client.post(
                 f"{self._base_url}/api/chat",
@@ -66,10 +69,13 @@ class OllamaClient:
         if self._owns_http_client:
             await self._http_client.aclose()
 
-    def _build_payload(self, user_message: UserMessage) -> dict[str, Any]:
+    def _build_payload(self, messages: list[ConversationMessage]) -> dict[str, Any]:
         return {
             "model": self._model,
-            "messages": [{"role": "user", "content": user_message.text}],
+            "messages": [
+                {"role": message.role, "content": message.content}
+                for message in messages
+            ],
             "stream": False,
         }
 

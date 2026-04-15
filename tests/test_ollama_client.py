@@ -6,7 +6,7 @@ from json import loads
 import httpx
 
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
-from talking_telegram_bot.models.messages import UserMessage
+from talking_telegram_bot.models.messages import ConversationMessage
 
 
 class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
@@ -28,7 +28,9 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
             http_client=http_client,
         )
 
-        reply = await client.generate_reply(UserMessage(text="ping"))
+        reply = await client.generate_reply(
+            [ConversationMessage(role="user", content="ping")],
+        )
 
         self.assertEqual(reply.text, "signal")
         await http_client.aclose()
@@ -52,9 +54,45 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         client.switch_model("model-b")
-        await client.generate_reply(UserMessage(text="ping"))
+        await client.generate_reply([ConversationMessage(role="user", content="ping")])
 
         self.assertEqual(requested_models, ["model-b"])
+        await http_client.aclose()
+
+    async def test_generate_reply_sends_all_messages(self) -> None:
+        request_payload = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            request_payload.update(loads(request.content))
+            return httpx.Response(
+                200,
+                json={"message": {"role": "assistant", "content": "ok"}},
+            )
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = OllamaClient(
+            base_url="http://ollama.local",
+            model="test-model",
+            timeout_seconds=10,
+            http_client=http_client,
+        )
+
+        await client.generate_reply(
+            [
+                ConversationMessage(role="user", content="old question"),
+                ConversationMessage(role="assistant", content="old answer"),
+                ConversationMessage(role="user", content="new question"),
+            ],
+        )
+
+        self.assertEqual(
+            request_payload["messages"],
+            [
+                {"role": "user", "content": "old question"},
+                {"role": "assistant", "content": "old answer"},
+                {"role": "user", "content": "new question"},
+            ],
+        )
         await http_client.aclose()
 
     async def test_list_model_names_reads_tags_response(self) -> None:
@@ -97,6 +135,8 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(OllamaClientError):
-            await client.generate_reply(UserMessage(text="ping"))
+            await client.generate_reply(
+                [ConversationMessage(role="user", content="ping")],
+            )
 
         await http_client.aclose()

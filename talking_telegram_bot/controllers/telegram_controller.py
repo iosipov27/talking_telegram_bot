@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import dataclass
 from time import monotonic
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -10,6 +12,7 @@ from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.telegram import MODEL_CALLBACK_PREFIX
 from talking_telegram_bot.constants.user_messages import (
     CURRENT_MODEL_BUTTON_LABEL,
+    LLM_THINKING_MESSAGE,
     MODEL_LIST_MESSAGE,
     MODEL_SELECTED_MESSAGE,
     SAFE_LLM_ERROR_MESSAGE,
@@ -22,6 +25,15 @@ from talking_telegram_bot.services.message_service import (
 )
 
 logger = logging.getLogger(__name__)
+SPINNER_FRAMES = ("-", "\\", "|", "/")
+SPINNER_UPDATE_SECONDS = 0.8
+
+
+@dataclass(frozen=True)
+class ThinkingSpinner:
+    message: object
+    stop_event: asyncio.Event
+    task: asyncio.Task
 
 
 class TelegramMessageController:
@@ -43,24 +55,38 @@ class TelegramMessageController:
         if message is None or message.text is None:
             return
         started_at = monotonic()
-        logger.info(
-            log_events.TEXT_MESSAGE_RECEIVED,
-            self._get_chat_id(update),
-            self._get_user_id(update),
-            len(message.text),
-        )
+        self._log_text_message_received(update, message.text)
+        user_id = self._get_user_id(update)
+        if user_id is None:
+            logger.warning(log_events.TEXT_MESSAGE_USER_ID_MISSING)
+            await self._send_reply(message, SAFE_LLM_ERROR_MESSAGE)
+            return
+        await self._reply_to_text_message(message, user_id, started_at)
+
+    async def _reply_to_text_message(
+        self,
+        message,
+        user_id: int,
+        started_at: float,
+    ) -> None:
+        spinner = await self._start_thinking_spinner(message)
+        reply_text = SAFE_LLM_ERROR_MESSAGE
+        is_successful = False
         try:
-            reply_text = await self._message_service.generate_reply(message.text)
+            reply_text = await self._message_service.generate_reply(
+                message.text,
+                user_id,
+            )
+            is_successful = True
         except MessageProcessingError as exc:
             logger.warning(log_events.TEXT_MESSAGE_PROCESSING_FAILED, exc)
-            await self._send_reply(message, SAFE_LLM_ERROR_MESSAGE)
-            return
         except Exception:
             logger.exception(log_events.UNEXPECTED_TELEGRAM_HANDLER_ERROR)
-            await self._send_reply(message, SAFE_LLM_ERROR_MESSAGE)
-            return
+        finally:
+            await self._stop_thinking_spinner(spinner)
         await self._send_reply(message, reply_text)
-        self._log_text_message_processed(started_at, reply_text)
+        if is_successful:
+            self._log_text_message_processed(started_at, reply_text)
 
     async def handle_models_command(
         self,
@@ -122,6 +148,72 @@ class TelegramMessageController:
             logger.info(log_events.TELEGRAM_REPLY_SENT, len(text))
         except Exception:
             logger.exception(log_events.TELEGRAM_REPLY_SEND_FAILED)
+
+    async def _start_thinking_spinner(self, message) -> ThinkingSpinner | None:
+        try:
+            spinner_message = await message.reply_text(
+                self._format_thinking_message(SPINNER_FRAMES[0]),
+            )
+        except Exception:
+            logger.exception(log_events.TELEGRAM_THINKING_MESSAGE_SEND_FAILED)
+            return None
+        stop_event = asyncio.Event()
+        task = asyncio.create_task(
+            self._run_thinking_spinner(spinner_message, stop_event),
+        )
+        return ThinkingSpinner(spinner_message, stop_event, task)
+
+    async def _run_thinking_spinner(
+        self,
+        spinner_message,
+        stop_event: asyncio.Event,
+    ) -> None:
+        frame_index = 1
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=SPINNER_UPDATE_SECONDS,
+                )
+            except TimeoutError:
+                if not await self._edit_thinking_spinner(
+                    spinner_message,
+                    SPINNER_FRAMES[frame_index],
+                ):
+                    return
+                frame_index = (frame_index + 1) % len(SPINNER_FRAMES)
+
+    async def _edit_thinking_spinner(self, spinner_message, spinner: str) -> bool:
+        try:
+            await spinner_message.edit_text(self._format_thinking_message(spinner))
+        except Exception:
+            logger.exception(log_events.TELEGRAM_THINKING_MESSAGE_EDIT_FAILED)
+            return False
+        return True
+
+    async def _stop_thinking_spinner(
+        self,
+        spinner: ThinkingSpinner | None,
+    ) -> None:
+        if spinner is None:
+            return
+        spinner.stop_event.set()
+        await spinner.task
+        try:
+            await spinner.message.delete()
+        except Exception:
+            logger.exception(log_events.TELEGRAM_THINKING_MESSAGE_DELETE_FAILED)
+
+    def _format_thinking_message(self, spinner: str) -> str:
+        return LLM_THINKING_MESSAGE.format(spinner=spinner)
+
+    def _log_text_message_received(self, update: Update, text: str) -> None:
+        logger.info(
+            log_events.TEXT_MESSAGE_RECEIVED,
+            self._get_chat_id(update),
+            self._get_user_id(update),
+            len(text),
+        )
 
     def _log_text_message_processed(self, started_at: float, reply_text: str) -> None:
         elapsed_seconds = monotonic() - started_at

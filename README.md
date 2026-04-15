@@ -2,16 +2,17 @@
 
 A simple Telegram bot that sends every text message to a local Ollama LLM and replies with the generated answer.
 
-The bot does not use a database. It does not store chat history. Each Telegram message is processed as a separate LLM request.
+The bot does not use a database. It stores per-user chat history as JSON files in `logs`. Each Telegram message is processed as a separate LLM request with that user's saved history.
 
 ## What It Does
 
 - Replies to text messages in Telegram.
-- Sends each message to Ollama through `POST /api/chat`.
+- Sends each message and that user's saved history to Ollama through `POST /api/chat`.
 - Uses `stream: false` for LLM responses.
 - Handles LLM and network errors with a safe Telegram reply.
 - Runs in Telegram polling mode.
 - Writes logs to the console and to `logs/bot.log`.
+- Writes request and LLM response history to per-user JSON files in `logs`.
 - Lets the user list and switch local Ollama models with `/models`.
 
 ## Project Structure
@@ -77,11 +78,13 @@ Logs are written to two places:
 
 - console output while the bot is running;
 - `logs/bot.log` for later error analysis.
+- `logs/chat_history_<user_id>.json` for per-user request and LLM response history.
 
 The log directory is ignored by git.
 Logs include safe event metadata: message received, reply sent, model list requested, model switched, text length, reply length, chat id, user id, and processing time.
 
-Logs do not include Telegram bot tokens, `.env` values, user message text, or LLM reply text.
+Application logs do not include Telegram bot tokens, `.env` values, user message text, or LLM reply text.
+Chat history JSON files do include user message text and LLM reply text.
 
 If the LLM is not available, the bot logs the processing error and replies in Telegram with:
 
