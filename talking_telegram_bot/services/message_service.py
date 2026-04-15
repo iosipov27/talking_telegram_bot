@@ -7,12 +7,17 @@ from talking_telegram_bot.clients.chat_history_client import (
 )
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
 from talking_telegram_bot.constants import log_events
+from talking_telegram_bot.constants.prompt_settings import (
+    AGENT_SYSTEM_PROMPT,
+    DEFAULT_AGENT_ROLE,
+)
 from talking_telegram_bot.constants.summary_settings import (
     SUMMARY_CONTEXT_PREFIX,
     SUMMARY_SYSTEM_PROMPT,
     SUMMARY_TRIGGER_ENTRIES,
     SUMMARY_UPDATE_PROMPT,
 )
+from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
 from talking_telegram_bot.models.messages import (
     ChatHistoryEntry,
     ChatHistoryLog,
@@ -28,14 +33,20 @@ class MessageProcessingError(RuntimeError):
     """Raised when a user message can not be processed safely."""
 
 
+class AgentRoleSelectionError(RuntimeError):
+    """Raised when the runtime agent role is invalid."""
+
+
 class MessageService:
     def __init__(
         self,
         ollama_client: OllamaClient,
         chat_history_client: ChatHistoryClient,
+        agent_role: str = DEFAULT_AGENT_ROLE,
     ) -> None:
         self._ollama_client = ollama_client
         self._chat_history_client = chat_history_client
+        self._agent_role = self._normalize_agent_role(agent_role)
 
     async def generate_reply(self, raw_text: str, user_id: int) -> str:
         user_message = self._normalize_message(raw_text)
@@ -52,11 +63,24 @@ class MessageService:
         await self._save_history(user_id, user_message.text, reply_text)
         return reply_text
 
+    def get_current_agent_role(self) -> str:
+        return self._agent_role
+
+    def set_agent_role(self, raw_role: str) -> str:
+        self._agent_role = self._normalize_agent_role(raw_role)
+        return self._agent_role
+
     def _normalize_message(self, raw_text: str) -> UserMessage:
         normalized_text = raw_text.strip()
         if normalized_text:
             return UserMessage(text=normalized_text)
         raise MessageProcessingError("Message text is empty.")
+
+    def _normalize_agent_role(self, raw_role: str) -> str:
+        normalized_role = raw_role.strip()
+        if normalized_role:
+            return normalized_role
+        raise AgentRoleSelectionError("Agent role is empty.")
 
     async def _load_history(self, user_id: int) -> ChatHistoryLog:
         try:
@@ -82,10 +106,14 @@ class MessageService:
     async def _generate_summary(self, history_log: ChatHistoryLog) -> str:
         summary_messages = self._build_summary_messages(history_log)
         logger.info(
-            log_events.SUMMARY_REQUEST_SENT_TO_LLM,
-            len(history_log.entries),
-            history_log.summary is not None,
-            len(summary_messages),
+            format_markdown_event(
+                log_events.SUMMARY_REQUEST_SENT_TO_LLM,
+                [
+                    ("Entry Count", len(history_log.entries)),
+                    ("Has Existing Summary", history_log.summary is not None),
+                    ("Message Count", len(summary_messages)),
+                ],
+            ),
         )
         try:
             summary_message = await self._ollama_client.generate_reply(
@@ -95,8 +123,16 @@ class MessageService:
             raise MessageProcessingError("LLM is unavailable.") from exc
         summary_text = summary_message.text.strip()
         logger.info(
-            log_events.SUMMARY_RESPONSE_RECEIVED_FROM_LLM,
-            len(summary_text),
+            format_markdown_event(
+                log_events.SUMMARY_RESPONSE_RECEIVED_FROM_LLM,
+                [("Summary Length", len(summary_text))],
+                detail_tables=[
+                    MarkdownTable(
+                        headers=("Type", "Content"),
+                        rows=(("summary", summary_text),),
+                    ),
+                ],
+            ),
         )
         if summary_text:
             return summary_text
@@ -107,7 +143,7 @@ class MessageService:
         history_log: ChatHistoryLog,
         user_message: UserMessage,
     ) -> list[ConversationMessage]:
-        messages = []
+        messages = [self._build_system_prompt()]
         if history_log.summary is not None:
             messages.append(self._build_summary_context(history_log.summary))
         messages.extend(self._build_entry_messages(history_log.entries))
@@ -143,6 +179,12 @@ class MessageService:
         return ConversationMessage(
             role="system",
             content=SUMMARY_CONTEXT_PREFIX.format(summary=summary.text),
+        )
+
+    def _build_system_prompt(self) -> ConversationMessage:
+        return ConversationMessage(
+            role="system",
+            content=AGENT_SYSTEM_PROMPT.format(agent_role=self._agent_role),
         )
 
     async def _save_summary(

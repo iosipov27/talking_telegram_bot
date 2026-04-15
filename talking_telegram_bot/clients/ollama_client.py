@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
+from talking_telegram_bot.constants import log_events
+from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
 from talking_telegram_bot.models.messages import AssistantMessage, ConversationMessage
+
+logger = logging.getLogger(__name__)
 
 
 class OllamaClientError(RuntimeError):
@@ -33,6 +38,7 @@ class OllamaClient:
         messages: list[ConversationMessage],
     ) -> AssistantMessage:
         payload = self._build_payload(messages)
+        logger.info(self._format_request_log(messages, payload["stream"]))
         try:
             response = await self._http_client.post(
                 f"{self._base_url}/api/chat",
@@ -45,7 +51,11 @@ class OllamaClient:
             raise OllamaClientError("Ollama returned an unsuccessful status.") from exc
         except httpx.HTTPError as exc:
             raise OllamaClientError("Ollama request failed.") from exc
-        return AssistantMessage(text=self._extract_content(self._read_json(response)))
+        assistant_message = AssistantMessage(
+            text=self._extract_content(self._read_json(response)),
+        )
+        logger.info(self._format_response_log(assistant_message.text))
+        return assistant_message
 
     async def list_model_names(self) -> list[str]:
         try:
@@ -114,3 +124,41 @@ class OllamaClient:
                 raise OllamaClientError("Ollama returned an invalid model name.")
             names.append(name)
         return sorted(names)
+
+    def _format_request_log(
+        self,
+        messages: list[ConversationMessage],
+        stream: bool,
+    ) -> str:
+        return format_markdown_event(
+            log_events.OLLAMA_REQUEST_SENT,
+            [
+                ("Model", self._model),
+                ("Message Count", len(messages)),
+                ("Stream", stream),
+            ],
+            detail_tables=[
+                MarkdownTable(
+                    headers=("#", "Role", "Content"),
+                    rows=tuple(
+                        (index, message.role, message.content)
+                        for index, message in enumerate(messages, start=1)
+                    ),
+                ),
+            ],
+        )
+
+    def _format_response_log(self, content: str) -> str:
+        return format_markdown_event(
+            log_events.OLLAMA_RESPONSE_RECEIVED,
+            [
+                ("Model", self._model),
+                ("Content Length", len(content)),
+            ],
+            detail_tables=[
+                MarkdownTable(
+                    headers=("Role", "Content"),
+                    rows=(("assistant", content),),
+                ),
+            ],
+        )

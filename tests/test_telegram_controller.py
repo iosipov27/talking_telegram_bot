@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, call, patch
+from unittest.mock import ANY, AsyncMock, Mock, call, patch
 
 from talking_telegram_bot.constants.user_messages import (
     LLM_THINKING_MESSAGE,
+    ROLE_MESSAGE,
+    ROLE_UPDATED_MESSAGE,
     SAFE_LLM_ERROR_MESSAGE,
     SAFE_MODEL_ERROR_MESSAGE,
 )
@@ -99,6 +101,31 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(spinner_message.edit_text.await_count, 1)
 
+    async def test_handle_text_message_logs_user_text_in_markdown_table(self) -> None:
+        spinner_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+        message = SimpleNamespace(
+            text="hello from telegram",
+            reply_text=AsyncMock(return_value=spinner_message),
+        )
+        update = SimpleNamespace(
+            effective_message=message,
+            effective_user=SimpleNamespace(id=123),
+        )
+        service = AsyncMock()
+        service.generate_reply.return_value = "hello"
+        controller = TelegramMessageController(service, AsyncMock())
+
+        with self.assertLogs(
+            "talking_telegram_bot.controllers.telegram_controller",
+            level="INFO",
+        ) as logs:
+            await controller.handle_text_message(update, None)
+
+        log_output = "\n".join(logs.output)
+        self.assertIn("### Telegram Text Message", log_output)
+        self.assertIn("| Role | Content |", log_output)
+        self.assertIn("hello from telegram", log_output)
+
     def _wait_for_reply(
         self,
         reply_started: asyncio.Event,
@@ -157,4 +184,41 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
         model_service.select_model_by_index.assert_awaited_once_with(1)
         query.edit_message_text.assert_awaited_once_with(
             "Current Ollama model: model-b",
+        )
+
+    async def test_handle_role_command_updates_agent_role(self) -> None:
+        message = SimpleNamespace(reply_text=AsyncMock())
+        update = SimpleNamespace(
+            effective_message=message,
+            effective_user=SimpleNamespace(id=123),
+        )
+        context = SimpleNamespace(args=["senior", "python", "developer"])
+        message_service = Mock()
+        message_service.set_agent_role.return_value = "senior python developer"
+        controller = TelegramMessageController(message_service, AsyncMock())
+
+        await controller.handle_role_command(update, context)
+
+        message_service.set_agent_role.assert_called_once_with(
+            "senior python developer",
+        )
+        message.reply_text.assert_awaited_once_with(
+            ROLE_UPDATED_MESSAGE.format(agent_role="senior python developer"),
+        )
+
+    async def test_handle_role_command_without_args_shows_current_role(self) -> None:
+        message = SimpleNamespace(reply_text=AsyncMock())
+        update = SimpleNamespace(
+            effective_message=message,
+            effective_user=SimpleNamespace(id=123),
+        )
+        context = SimpleNamespace(args=[])
+        message_service = Mock()
+        message_service.get_current_agent_role.return_value = "опытный программист"
+        controller = TelegramMessageController(message_service, AsyncMock())
+
+        await controller.handle_role_command(update, context)
+
+        message.reply_text.assert_awaited_once_with(
+            ROLE_MESSAGE.format(agent_role="опытный программист"),
         )

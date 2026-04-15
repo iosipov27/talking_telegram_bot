@@ -6,6 +6,7 @@ from json import loads
 import httpx
 
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
+from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.models.messages import ConversationMessage
 
 
@@ -33,6 +34,42 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(reply.text, "signal")
+        await http_client.aclose()
+
+    async def test_generate_reply_logs_request_and_response_tables(self) -> None:
+        http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={"message": {"role": "assistant", "content": "signal"}},
+                ),
+            ),
+        )
+        client = OllamaClient(
+            base_url="http://ollama.local",
+            model="test-model",
+            timeout_seconds=10,
+            http_client=http_client,
+        )
+
+        with self.assertLogs(
+            "talking_telegram_bot.clients.ollama_client",
+            level="INFO",
+        ) as logs:
+            await client.generate_reply(
+                [
+                    ConversationMessage(role="system", content="be concise"),
+                    ConversationMessage(role="user", content="ping"),
+                ],
+            )
+
+        log_output = "\n".join(logs.output)
+        self.assertIn(log_events.OLLAMA_REQUEST_SENT, log_output)
+        self.assertIn("| # | Role | Content |", log_output)
+        self.assertIn("be concise", log_output)
+        self.assertIn(log_events.OLLAMA_RESPONSE_RECEIVED, log_output)
+        self.assertIn("| Role | Content |", log_output)
+        self.assertIn("signal", log_output)
         await http_client.aclose()
 
     async def test_generate_reply_uses_switched_model(self) -> None:

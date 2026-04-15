@@ -15,11 +15,15 @@ from talking_telegram_bot.constants.user_messages import (
     LLM_THINKING_MESSAGE,
     MODEL_LIST_MESSAGE,
     MODEL_SELECTED_MESSAGE,
+    ROLE_MESSAGE,
+    ROLE_UPDATED_MESSAGE,
     SAFE_LLM_ERROR_MESSAGE,
     SAFE_MODEL_ERROR_MESSAGE,
 )
+from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
 from talking_telegram_bot.services.model_service import ModelSelectionError, ModelService
 from talking_telegram_bot.services.message_service import (
+    AgentRoleSelectionError,
     MessageProcessingError,
     MessageService,
 )
@@ -98,9 +102,13 @@ class TelegramMessageController:
         if message is None:
             return
         logger.info(
-            log_events.MODELS_COMMAND_RECEIVED,
-            self._get_chat_id(update),
-            self._get_user_id(update),
+            format_markdown_event(
+                log_events.MODELS_COMMAND_RECEIVED,
+                [
+                    ("Chat ID", self._get_chat_id(update)),
+                    ("User ID", self._get_user_id(update)),
+                ],
+            ),
         )
         try:
             available_models = await self._model_service.list_models()
@@ -115,7 +123,66 @@ class TelegramMessageController:
                 available_models.model_names,
             ),
         )
-        logger.info(log_events.MODEL_LIST_SENT, len(available_models.model_names))
+        logger.info(
+            format_markdown_event(
+                log_events.MODEL_LIST_SENT,
+                [
+                    ("Current Model", available_models.current_model),
+                    ("Model Count", len(available_models.model_names)),
+                ],
+                detail_tables=[
+                    MarkdownTable(
+                        headers=("#", "Model"),
+                        rows=tuple(
+                            (index, model_name)
+                            for index, model_name in enumerate(
+                                available_models.model_names,
+                                start=1,
+                            )
+                        ),
+                    ),
+                ],
+            ),
+        )
+
+    async def handle_role_command(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        message = update.effective_message
+        if message is None:
+            return
+        requested_role = self._read_command_argument(context)
+        logger.info(
+            format_markdown_event(
+                log_events.ROLE_COMMAND_RECEIVED,
+                [
+                    ("Chat ID", self._get_chat_id(update)),
+                    ("User ID", self._get_user_id(update)),
+                    ("Requested Role", requested_role or "(not provided)"),
+                ],
+            ),
+        )
+        if not requested_role:
+            await self._send_reply(message, self._format_role_message())
+            return
+        try:
+            selected_role = self._message_service.set_agent_role(requested_role)
+        except AgentRoleSelectionError as exc:
+            logger.warning(log_events.ROLE_UPDATE_FAILED, exc)
+            await self._send_reply(message, self._format_role_message())
+            return
+        await self._send_reply(
+            message,
+            ROLE_UPDATED_MESSAGE.format(agent_role=selected_role),
+        )
+        logger.info(
+            format_markdown_event(
+                log_events.ROLE_UPDATED,
+                [("Selected Role", selected_role)],
+            ),
+        )
 
     async def handle_model_selection(
         self,
@@ -128,8 +195,13 @@ class TelegramMessageController:
             return
         await query.answer()
         logger.info(
-            log_events.MODEL_SELECTION_RECEIVED,
-            self._get_user_id(update),
+            format_markdown_event(
+                log_events.MODEL_SELECTION_RECEIVED,
+                [
+                    ("User ID", self._get_user_id(update)),
+                    ("Callback Data", query.data),
+                ],
+            ),
         )
         try:
             selected_model = await self._select_model_from_callback(query.data)
@@ -140,12 +212,28 @@ class TelegramMessageController:
         await query.edit_message_text(
             MODEL_SELECTED_MESSAGE.format(selected_model=selected_model),
         )
-        logger.info(log_events.MODEL_SWITCHED, selected_model)
+        logger.info(
+            format_markdown_event(
+                log_events.MODEL_SWITCHED,
+                [("Selected Model", selected_model)],
+            ),
+        )
 
     async def _send_reply(self, message, text: str) -> None:
         try:
             await message.reply_text(text)
-            logger.info(log_events.TELEGRAM_REPLY_SENT, len(text))
+            logger.info(
+                format_markdown_event(
+                    log_events.TELEGRAM_REPLY_SENT,
+                    [("Text Length", len(text))],
+                    detail_tables=[
+                        MarkdownTable(
+                            headers=("Role", "Content"),
+                            rows=(("assistant", text),),
+                        ),
+                    ],
+                ),
+            )
         except Exception:
             logger.exception(log_events.TELEGRAM_REPLY_SEND_FAILED)
 
@@ -209,18 +297,32 @@ class TelegramMessageController:
 
     def _log_text_message_received(self, update: Update, text: str) -> None:
         logger.info(
-            log_events.TEXT_MESSAGE_RECEIVED,
-            self._get_chat_id(update),
-            self._get_user_id(update),
-            len(text),
+            format_markdown_event(
+                log_events.TEXT_MESSAGE_RECEIVED,
+                [
+                    ("Chat ID", self._get_chat_id(update)),
+                    ("User ID", self._get_user_id(update)),
+                    ("Text Length", len(text)),
+                ],
+                detail_tables=[
+                    MarkdownTable(
+                        headers=("Role", "Content"),
+                        rows=(("user", text),),
+                    ),
+                ],
+            ),
         )
 
     def _log_text_message_processed(self, started_at: float, reply_text: str) -> None:
         elapsed_seconds = monotonic() - started_at
         logger.info(
-            log_events.TEXT_MESSAGE_PROCESSED,
-            len(reply_text),
-            elapsed_seconds,
+            format_markdown_event(
+                log_events.TEXT_MESSAGE_PROCESSED,
+                [
+                    ("Reply Length", len(reply_text)),
+                    ("Elapsed Seconds", f"{elapsed_seconds:.3f}"),
+                ],
+            ),
         )
 
     def _get_chat_id(self, update: Update) -> int | None:
@@ -241,6 +343,11 @@ class TelegramMessageController:
 
     def _format_model_list(self, current_model: str) -> str:
         return MODEL_LIST_MESSAGE.format(current_model=current_model)
+
+    def _format_role_message(self) -> str:
+        return ROLE_MESSAGE.format(
+            agent_role=self._message_service.get_current_agent_role(),
+        )
 
     def _build_model_keyboard(
         self,
@@ -268,3 +375,9 @@ class TelegramMessageController:
         if model_name == current_model:
             return CURRENT_MODEL_BUTTON_LABEL.format(model_name=model_name)
         return model_name
+
+    def _read_command_argument(self, context: ContextTypes.DEFAULT_TYPE) -> str:
+        args = getattr(context, "args", None)
+        if not args:
+            return ""
+        return " ".join(args).strip()

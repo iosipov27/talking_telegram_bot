@@ -7,6 +7,7 @@ from talking_telegram_bot.clients.chat_history_client import (
     ChatHistoryClientError,
 )
 from talking_telegram_bot.clients.ollama_client import OllamaClientError
+from talking_telegram_bot.constants.prompt_settings import AGENT_SYSTEM_PROMPT
 from talking_telegram_bot.constants.summary_settings import SUMMARY_TRIGGER_ENTRIES
 from talking_telegram_bot.models.messages import (
     AssistantMessage,
@@ -15,6 +16,7 @@ from talking_telegram_bot.models.messages import (
     ChatSummary,
 )
 from talking_telegram_bot.services.message_service import (
+    AgentRoleSelectionError,
     MessageProcessingError,
     MessageService,
 )
@@ -77,6 +79,12 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(message.role, message.content) for message in llm_messages],
             [
+                (
+                    "system",
+                    AGENT_SYSTEM_PROMPT.format(
+                        agent_role="опытный программист",
+                    ),
+                ),
                 ("user", "old question"),
                 ("assistant", "old answer"),
                 ("user", "new question"),
@@ -131,6 +139,12 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
             [
                 (
                     "system",
+                    AGENT_SYSTEM_PROMPT.format(
+                        agent_role="опытный программист",
+                    ),
+                ),
+                (
+                    "system",
                     "Previous conversation summary:\nUser likes concise answers.",
                 ),
                 ("user", "new question"),
@@ -162,6 +176,12 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [(message.role, message.content) for message in main_messages],
             [
+                (
+                    "system",
+                    AGENT_SYSTEM_PROMPT.format(
+                        agent_role="опытный программист",
+                    ),
+                ),
                 ("system", "Previous conversation summary:\ncompact summary"),
                 ("user", "new question"),
             ],
@@ -213,10 +233,40 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         ) as logs:
             await service.generate_reply("new question", 123)
 
-        self.assertIn("Sending chat history to LLM for summary", logs.output[0])
-        self.assertIn("entry_count=5", logs.output[0])
-        self.assertIn("LLM summary response received", logs.output[1])
-        self.assertIn("summary_length=12", logs.output[1])
+        joined_logs = "\n".join(logs.output)
+        self.assertIn("### LLM Summary Request", joined_logs)
+        self.assertIn("| Entry Count | 5 |", joined_logs)
+        self.assertIn("### LLM Summary Response", joined_logs)
+        self.assertIn("| Summary Length | 12 |", joined_logs)
+        self.assertIn("| summary | summary text |", joined_logs)
+
+    async def test_generate_reply_uses_updated_agent_role(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.return_value = AssistantMessage(text="hello")
+        history_client = AsyncMock()
+        history_client.read_history.return_value = ChatHistoryLog(
+            summary=None,
+            entries=[],
+        )
+        service = MessageService(ollama_client, history_client)
+        service.set_agent_role("системный аналитик")
+
+        await service.generate_reply("hi", 123)
+
+        llm_messages = ollama_client.generate_reply.await_args.args[0]
+        self.assertEqual(
+            (llm_messages[0].role, llm_messages[0].content),
+            (
+                "system",
+                AGENT_SYSTEM_PROMPT.format(agent_role="системный аналитик"),
+            ),
+        )
+
+    def test_set_agent_role_raises_for_empty_value(self) -> None:
+        service = MessageService(AsyncMock(), AsyncMock())
+
+        with self.assertRaises(AgentRoleSelectionError):
+            service.set_agent_role("   ")
 
     async def test_generate_reply_raises_for_empty_summary(self) -> None:
         ollama_client = AsyncMock()

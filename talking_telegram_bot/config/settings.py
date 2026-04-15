@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from talking_telegram_bot.constants.prompt_settings import DEFAULT_AGENT_ROLE
+
 
 class SettingsError(RuntimeError):
     """Raised when environment settings are missing or invalid."""
@@ -15,6 +17,7 @@ class Settings:
     telegram_bot_token: str
     ollama_base_url: str
     ollama_model: str
+    ollama_agent_role: str
     ollama_timeout_seconds: float
     telegram_concurrent_updates: int
 
@@ -25,6 +28,7 @@ def load_settings() -> Settings:
         telegram_bot_token=_read_required_env("TELEGRAM_BOT_TOKEN"),
         ollama_base_url=_read_required_env("OLLAMA_BASE_URL"),
         ollama_model=_read_required_env("OLLAMA_MODEL"),
+        ollama_agent_role=_read_text_env("OLLAMA_AGENT_ROLE", DEFAULT_AGENT_ROLE),
         ollama_timeout_seconds=_read_positive_float_env("OLLAMA_TIMEOUT_SECONDS"),
         telegram_concurrent_updates=_read_positive_int_env(
             "TELEGRAM_CONCURRENT_UPDATES",
@@ -38,6 +42,13 @@ def _read_required_env(name: str) -> str:
     if value:
         return value
     raise SettingsError(f"Environment variable {name} is required.")
+
+
+def _read_text_env(name: str, default: str) -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    return default
 
 
 def _read_positive_float_env(name: str) -> float:

@@ -1,30 +1,26 @@
 SETTINGS_LOAD_FAILED = "Failed to load application settings."
 
-TEXT_MESSAGE_RECEIVED = (
-    "Telegram text message received. chat_id=%s user_id=%s text_length=%s"
-)
+TEXT_MESSAGE_RECEIVED = "Telegram Text Message"
 TEXT_MESSAGE_PROCESSING_FAILED = "Failed to process message: %s"
 TEXT_MESSAGE_USER_ID_MISSING = "Telegram text message has no user id."
 UNEXPECTED_TELEGRAM_HANDLER_ERROR = "Unexpected error while handling Telegram message."
-TEXT_MESSAGE_PROCESSED = (
-    "Telegram text message processed. reply_length=%s elapsed_seconds=%.3f"
-)
-SUMMARY_REQUEST_SENT_TO_LLM = (
-    "Sending chat history to LLM for summary. entry_count=%s "
-    "has_existing_summary=%s message_count=%s"
-)
-SUMMARY_RESPONSE_RECEIVED_FROM_LLM = (
-    "LLM summary response received. summary_length=%s"
-)
+TEXT_MESSAGE_PROCESSED = "Telegram Message Processed"
+SUMMARY_REQUEST_SENT_TO_LLM = "LLM Summary Request"
+SUMMARY_RESPONSE_RECEIVED_FROM_LLM = "LLM Summary Response"
+OLLAMA_REQUEST_SENT = "Ollama Request"
+OLLAMA_RESPONSE_RECEIVED = "Ollama Response"
 
-MODELS_COMMAND_RECEIVED = "Telegram /models command received. chat_id=%s user_id=%s"
+MODELS_COMMAND_RECEIVED = "Telegram /models Command"
 MODEL_LIST_FAILED = "Failed to list Ollama models: %s"
-MODEL_LIST_SENT = "Ollama model list sent. model_count=%s"
-MODEL_SELECTION_RECEIVED = "Telegram model selection received. user_id=%s"
+MODEL_LIST_SENT = "Ollama Model List"
+MODEL_SELECTION_RECEIVED = "Telegram Model Selection"
 MODEL_SELECTION_FAILED = "Failed to select Ollama model: %s"
-MODEL_SWITCHED = "Ollama model switched. model=%s"
+MODEL_SWITCHED = "Ollama Model Switched"
+ROLE_COMMAND_RECEIVED = "Telegram /role Command"
+ROLE_UPDATE_FAILED = "Failed to update agent role: %s"
+ROLE_UPDATED = "Telegram Agent Role Updated"
 
-TELEGRAM_REPLY_SENT = "Telegram reply sent. text_length=%s"
+TELEGRAM_REPLY_SENT = "Telegram Reply"
 TELEGRAM_REPLY_SEND_FAILED = "Failed to send Telegram reply."
 TELEGRAM_THINKING_MESSAGE_SEND_FAILED = "Failed to send Telegram thinking message."
 TELEGRAM_THINKING_MESSAGE_EDIT_FAILED = "Failed to edit Telegram thinking message."

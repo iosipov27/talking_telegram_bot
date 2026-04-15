@@ -16,6 +16,8 @@ The bot does not use a database. It stores per-user chat history as JSON files i
 - Summarizes saved history after 5 pairs and sends the summary with new requests.
 - Keeps summary settings in `talking_telegram_bot/constants/summary_settings.py`.
 - Lets the user list and switch local Ollama models with `/models`.
+- Sends a system prompt with each user request so the model keeps the selected role.
+- Lets the user change the runtime agent role with `/role`.
 
 ## Project Structure
 
@@ -42,6 +44,7 @@ Fill the local `.env` file:
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3.5:0.8b
+OLLAMA_AGENT_ROLE=опытный программист
 OLLAMA_TIMEOUT_SECONDS=60
 ```
 
@@ -59,6 +62,14 @@ Then run the bot:
 
 Open Telegram, send a text message to your bot, and wait for the reply.
 
+Each user request includes a system prompt in the LLM context:
+
+```text
+Ты опытный программист и отвечаешь кратко и по делу.
+```
+
+The default role comes from `OLLAMA_AGENT_ROLE` in `.env`.
+
 ## Select A Model
 
 The default model is configured by `OLLAMA_MODEL` in `.env`.
@@ -74,6 +85,17 @@ Tap a model button to make it the current model.
 
 Model selection is kept only in process memory. If the bot restarts, it uses `OLLAMA_MODEL` from `.env` again.
 
+## Set Agent Role
+
+While the bot is running, send this Telegram command:
+
+```text
+/role senior python developer
+```
+
+The bot updates the runtime role and includes it in the system prompt for following requests.
+If the bot restarts, it uses `OLLAMA_AGENT_ROLE` from `.env` again.
+
 ## Logs
 
 Logs are written to two places:
@@ -83,10 +105,10 @@ Logs are written to two places:
 - `logs/chat_history_<user_id>.json` for per-user request and LLM response history, plus the latest summary.
 
 The log directory is ignored by git.
-Logs include safe event metadata: message received, reply sent, model list requested, model switched, text length, reply length, chat id, user id, and processing time.
-
-Application logs do not include Telegram bot tokens, `.env` values, user message text, or LLM reply text.
-Chat history JSON files do include user message text and LLM reply text.
+Console and `logs/bot.log` use markdown-style tables for log entries.
+Console log headers are colorized by level for easier scanning.
+Application logs now include full user messages, full Ollama request context, full Ollama responses, and generated summaries.
+Application logs still do not include Telegram bot tokens or other secret `.env` values.
 
 If the LLM is not available, the bot logs the processing error and replies in Telegram with:
 
