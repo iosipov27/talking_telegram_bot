@@ -114,15 +114,20 @@ class MessageService:
             return final_answer.strip()
         action = payload.get("action")
         if action == "final_response":
-            response = payload.get("response")
-            if isinstance(response, str) and response.strip():
-                return response.strip()
+            response = self._read_final_response_value(payload)
+            if response is not None:
+                return response
             args = payload.get("args")
             if not isinstance(args, dict):
                 return None
-            response = args.get("response")
-            if isinstance(response, str) and response.strip():
-                return response.strip()
+            return self._read_final_response_value(args)
+        return None
+
+    def _read_final_response_value(self, payload: dict[str, Any]) -> str | None:
+        for key in ("response", "answer"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
         return None
 
     def _build_json_rows(

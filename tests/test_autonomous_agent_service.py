@@ -55,6 +55,17 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(reply_text, "answer")
 
+    async def test_run_returns_final_response_from_action_answer_payload(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.return_value = AssistantMessage(
+            text='{"thought":"done","action":"final_response","args":{"answer":"answer"}}',
+        )
+        service = AutonomousAgentService(ollama_client, AsyncMock(), AsyncMock())
+
+        reply_text = await service.run("system", "user task")
+
+        self.assertEqual(reply_text, "answer")
+
     async def test_run_returns_final_response_from_top_level_response(self) -> None:
         ollama_client = AsyncMock()
         ollama_client.generate_reply.return_value = AssistantMessage(

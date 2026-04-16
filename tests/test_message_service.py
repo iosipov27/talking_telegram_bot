@@ -72,6 +72,17 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(reply_text, "done")
 
+    async def test_generate_reply_returns_final_answer_from_json_answer_payload(self) -> None:
+        agent_service = AsyncMock()
+        agent_service.run.return_value = (
+            '{"action":"final_response","args":{"answer":"done"}}'
+        )
+        service = MessageService(agent_service)
+
+        reply_text = await service.generate_reply("hi", 123)
+
+        self.assertEqual(reply_text, "done")
+
     async def test_generate_reply_returns_top_level_final_response(self) -> None:
         agent_service = AsyncMock()
         agent_service.run.return_value = (

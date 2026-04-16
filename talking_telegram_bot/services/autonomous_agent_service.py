@@ -115,15 +115,20 @@ class AutonomousAgentService:
             return final_answer
         action = payload.get("action")
         if action == "final_response":
-            response = payload.get("response")
-            if isinstance(response, str):
+            response = self._read_final_response_value(payload)
+            if response is not None:
                 return response
             args = payload.get("args")
             if not isinstance(args, dict):
                 return None
-            response = args.get("response")
-            if isinstance(response, str):
-                return response
+            return self._read_final_response_value(args)
+        return None
+
+    def _read_final_response_value(self, payload: dict[str, Any]) -> str | None:
+        for key in ("response", "answer"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
         return None
 
     async def _build_follow_up(self, payload: dict[str, Any]) -> str:
