@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.prompt_settings import AGENT_CONTINUE_PROMPT
+from talking_telegram_bot.constants.user_messages import (
+    FINAL_CHECK_PROGRESS_MESSAGE,
+    WEB_RESULTS_PROGRESS_MESSAGE,
+    WEB_SEARCH_PROGRESS_MESSAGE,
+)
 from talking_telegram_bot.models.calculator import CalculatorResponse
 from talking_telegram_bot.models.messages import AssistantMessage
 from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
@@ -114,6 +119,47 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             observation["tool_result"]["results"][0]["title"],
             "Release notes",
+        )
+
+    async def test_run_reports_web_progress_states(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.side_effect = [
+            AssistantMessage(
+                text='{"thought":"need web data","action":"search_web","args":{"query":"latest ollama release"}}',
+            ),
+            AssistantMessage(text='{"final_answer":"done with sources"}'),
+        ]
+        search_web_service = AsyncMock()
+        search_web_service.search_web.return_value = SearchWebResponse(
+            query="latest ollama release",
+            results=[
+                SearchWebResult(
+                    title="Release notes",
+                    url="https://example.com/release",
+                    content="Important changes",
+                ),
+            ],
+        )
+        progress_callback = AsyncMock()
+        service = AutonomousAgentService(
+            ollama_client,
+            search_web_service,
+            AsyncMock(),
+        )
+
+        reply_text = await service.run(
+            "system",
+            "user task",
+            progress_callback=progress_callback,
+        )
+
+        self.assertEqual(reply_text, "done with sources")
+        progress_callback.assert_has_awaits(
+            [
+                call(WEB_SEARCH_PROGRESS_MESSAGE),
+                call(WEB_RESULTS_PROGRESS_MESSAGE),
+                call(FINAL_CHECK_PROGRESS_MESSAGE),
+            ],
         )
 
     async def test_run_prompts_agent_to_continue_for_non_terminal_json(self) -> None:

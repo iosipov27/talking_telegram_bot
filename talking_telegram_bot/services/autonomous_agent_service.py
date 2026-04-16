@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 import json
 import logging
 from datetime import datetime
@@ -11,6 +12,11 @@ from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.prompt_settings import (
     AGENT_CONTINUE_PROMPT,
     AGENT_MAX_STEPS,
+)
+from talking_telegram_bot.constants.user_messages import (
+    FINAL_CHECK_PROGRESS_MESSAGE,
+    WEB_RESULTS_PROGRESS_MESSAGE,
+    WEB_SEARCH_PROGRESS_MESSAGE,
 )
 from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
 from talking_telegram_bot.models.agent import AgentToolCall
@@ -25,6 +31,7 @@ from talking_telegram_bot.services.search_web_service import (
 )
 
 logger = logging.getLogger(__name__)
+ProgressCallback = Callable[[str], Awaitable[None]]
 
 
 class AutonomousAgentError(RuntimeError):
@@ -42,12 +49,22 @@ class AutonomousAgentService:
         self._search_web_service = search_web_service
         self._calculator_service = calculator_service
 
-    async def run(self, system_prompt: str, user_prompt: str) -> str:
+    async def run(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> str:
         messages = [
             ConversationMessage(role="system", content=system_prompt),
             ConversationMessage(role="user", content=user_prompt),
         ]
         for step_number in range(1, AGENT_MAX_STEPS + 1):
+            if step_number > 1:
+                await self._report_progress(
+                    progress_callback,
+                    FINAL_CHECK_PROGRESS_MESSAGE,
+                )
             response_text = await self._request_step(messages)
             payload = self._parse_json_object(response_text)
             if payload is None:
@@ -59,7 +76,7 @@ class AutonomousAgentService:
             messages.append(
                 ConversationMessage(role="assistant", content=response_text),
             )
-            follow_up = await self._build_follow_up(payload)
+            follow_up = await self._build_follow_up(payload, progress_callback)
             messages.append(ConversationMessage(role="user", content=follow_up))
         raise AutonomousAgentError("Agent exceeded the maximum number of steps.")
 
@@ -131,28 +148,38 @@ class AutonomousAgentService:
                 return value
         return None
 
-    async def _build_follow_up(self, payload: dict[str, Any]) -> str:
+    async def _build_follow_up(
+        self,
+        payload: dict[str, Any],
+        progress_callback: ProgressCallback | None,
+    ) -> str:
         tool_call = self._read_tool_call(payload)
         if tool_call is None:
             return AGENT_CONTINUE_PROMPT
         if tool_call.action == "search_web":
-            return await self._run_search_web(tool_call)
+            return await self._run_search_web(tool_call, progress_callback)
         if tool_call.action == "calculator":
             return self._run_calculator(tool_call)
         return self._build_error_observation(
             f"Unknown tool: {tool_call.action}.",
         )
 
-    async def _run_search_web(self, tool_call: AgentToolCall) -> str:
+    async def _run_search_web(
+        self,
+        tool_call: AgentToolCall,
+        progress_callback: ProgressCallback | None,
+    ) -> str:
         query = tool_call.args.get("query")
         if not isinstance(query, str):
             return self._build_error_observation(
                 "Tool search_web requires a string query.",
             )
+        await self._report_progress(progress_callback, WEB_SEARCH_PROGRESS_MESSAGE)
         try:
             search_response = await self._search_web_service.search_web(query)
         except SearchWebServiceError as exc:
             raise AutonomousAgentError("Web search is unavailable.") from exc
+        await self._report_progress(progress_callback, WEB_RESULTS_PROGRESS_MESSAGE)
         return self._build_tool_observation(
             tool_call.action,
             {
@@ -201,6 +228,15 @@ class AutonomousAgentService:
             {"tool_error": error_message},
             ensure_ascii=False,
         )
+
+    async def _report_progress(
+        self,
+        progress_callback: ProgressCallback | None,
+        message: str,
+    ) -> None:
+        if progress_callback is None:
+            return
+        await progress_callback(message)
 
     def _log_thought(self, step_number: int, payload: dict[str, Any]) -> None:
         thought = payload.get("thought")

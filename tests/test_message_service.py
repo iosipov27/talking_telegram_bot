@@ -32,6 +32,7 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         agent_service.run.assert_awaited_once_with(
             AGENT_SYSTEM_PROMPT.format(agent_role="autonomous AI agent"),
             "hi",
+            progress_callback=None,
         )
 
     async def test_generate_reply_uses_updated_agent_role(self) -> None:
@@ -45,6 +46,21 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         agent_service.run.assert_awaited_once_with(
             AGENT_SYSTEM_PROMPT.format(agent_role="системный аналитик"),
             "hi",
+            progress_callback=None,
+        )
+
+    async def test_generate_reply_passes_progress_callback_to_agent_service(self) -> None:
+        agent_service = AsyncMock()
+        agent_service.run.return_value = "hello"
+        progress_callback = AsyncMock()
+        service = MessageService(agent_service)
+
+        await service.generate_reply("hi", 123, progress_callback=progress_callback)
+
+        agent_service.run.assert_awaited_once_with(
+            AGENT_SYSTEM_PROMPT.format(agent_role="autonomous AI agent"),
+            "hi",
+            progress_callback=progress_callback,
         )
 
     async def test_generate_reply_raises_for_empty_input(self) -> None:
@@ -93,6 +109,17 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         reply_text = await service.generate_reply("hi", 123)
 
         self.assertEqual(reply_text, "done")
+
+    async def test_generate_reply_extracts_final_response_from_invalid_json_string(self) -> None:
+        agent_service = AsyncMock()
+        agent_service.run.return_value = (
+            ' {"thought":"ready","action":"final_response","args":{"answer":"line 1\\nline 2"}'
+        )
+        service = MessageService(agent_service)
+
+        reply_text = await service.generate_reply("hi", 123)
+
+        self.assertEqual(reply_text, "line 1\nline 2")
 
     async def test_generate_reply_formats_json_object_as_table(self) -> None:
         agent_service = AsyncMock()

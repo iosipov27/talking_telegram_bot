@@ -8,6 +8,7 @@ from talking_telegram_bot.models.messages import ConversationMessage, UserMessag
 from talking_telegram_bot.services.autonomous_agent_service import (
     AutonomousAgentError,
     AutonomousAgentService,
+    ProgressCallback,
 )
 
 
@@ -32,13 +33,19 @@ class MessageService:
         self._agent_service = agent_service
         self._agent_role = self._normalize_agent_role(agent_role)
 
-    async def generate_reply(self, raw_text: str, user_id: int) -> str:
+    async def generate_reply(
+        self,
+        raw_text: str,
+        user_id: int,
+        progress_callback: ProgressCallback | None = None,
+    ) -> str:
         del user_id
         user_message = self._normalize_message(raw_text)
         try:
             reply_text = await self._agent_service.run(
                 self._build_system_prompt().content,
                 user_message.text,
+                progress_callback=progress_callback,
             )
         except AutonomousAgentError as exc:
             raise MessageProcessingError("LLM is unavailable.") from exc
@@ -90,6 +97,9 @@ class MessageService:
     def _format_json_reply(self, reply_text: str) -> str:
         payload = self._parse_json_object(reply_text)
         if payload is None:
+            fallback_reply = self._extract_final_response_from_text(reply_text)
+            if fallback_reply is not None:
+                return fallback_reply
             return reply_text
         final_response = self._extract_final_response(payload)
         if final_response is not None:
@@ -129,6 +139,32 @@ class MessageService:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return None
+
+    def _extract_final_response_from_text(self, reply_text: str) -> str | None:
+        final_answer = self._extract_json_string_field(reply_text, "final_answer")
+        if final_answer is not None and final_answer.strip():
+            return final_answer.strip()
+        if '"action"' not in reply_text or "final_response" not in reply_text:
+            return None
+        for key in ("response", "answer"):
+            value = self._extract_json_string_field(reply_text, key)
+            if value is not None and value.strip():
+                return value.strip()
+        return None
+
+    def _extract_json_string_field(
+        self,
+        reply_text: str,
+        field_name: str,
+    ) -> str | None:
+        pattern = rf'"{re.escape(field_name)}"\s*:\s*"((?:\\.|[^"\\])*)"'
+        match = re.search(pattern, reply_text, flags=re.DOTALL)
+        if match is None:
+            return None
+        try:
+            return json.loads(f'"{match.group(1)}"')
+        except ValueError:
+            return match.group(1)
 
     def _build_json_rows(
         self,

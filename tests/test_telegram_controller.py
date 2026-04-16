@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, Mock, call, patch
+from unittest.mock import ANY, AsyncMock, Mock, call
 
 from talking_telegram_bot.constants.user_messages import (
     FILE_READ_ERROR_MESSAGE,
     FILE_TOO_LARGE_MESSAGE,
+    FINAL_CHECK_PROGRESS_MESSAGE,
     LLM_THINKING_MESSAGE,
     ROLE_MESSAGE,
     ROLE_UPDATED_MESSAGE,
     SAFE_LLM_ERROR_MESSAGE,
     SAFE_MODEL_ERROR_MESSAGE,
     UNSUPPORTED_FILE_MESSAGE,
+    WEB_RESULTS_PROGRESS_MESSAGE,
+    WEB_SEARCH_PROGRESS_MESSAGE,
 )
 from talking_telegram_bot.controllers.telegram_controller import (
     TelegramMessageController,
@@ -29,10 +31,10 @@ from talking_telegram_bot.services.message_service import MessageProcessingError
 
 class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_handle_text_message_sends_service_reply(self) -> None:
-        spinner_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+        progress_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
         message = SimpleNamespace(
             text="hi",
-            reply_text=AsyncMock(return_value=spinner_message),
+            reply_text=AsyncMock(return_value=progress_message),
         )
         update = SimpleNamespace(
             effective_message=message,
@@ -44,20 +46,24 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         await controller.handle_text_message(update, None)
 
-        service.generate_reply.assert_awaited_once_with("hi", 123)
+        service.generate_reply.assert_awaited_once_with(
+            "hi",
+            123,
+            progress_callback=ANY,
+        )
         message.reply_text.assert_has_awaits(
             [
-                call(LLM_THINKING_MESSAGE.format(spinner="-")),
+                call(LLM_THINKING_MESSAGE),
                 call("hello"),
             ],
         )
-        spinner_message.delete.assert_awaited_once()
+        progress_message.delete.assert_awaited_once()
 
     async def test_handle_text_message_sends_safe_error_message(self) -> None:
-        spinner_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+        progress_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
         message = SimpleNamespace(
             text="hi",
-            reply_text=AsyncMock(return_value=spinner_message),
+            reply_text=AsyncMock(return_value=progress_message),
         )
         update = SimpleNamespace(
             effective_message=message,
@@ -71,49 +77,41 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         message.reply_text.assert_has_awaits(
             [
-                call(LLM_THINKING_MESSAGE.format(spinner="-")),
+                call(LLM_THINKING_MESSAGE),
                 call(SAFE_LLM_ERROR_MESSAGE),
             ],
         )
-        spinner_message.delete.assert_awaited_once()
+        progress_message.delete.assert_awaited_once()
 
-    async def test_handle_text_message_updates_thinking_spinner(self) -> None:
-        reply_started = asyncio.Event()
-        release_reply = asyncio.Event()
-        spinner_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+    async def test_handle_text_message_updates_progress_message(self) -> None:
+        progress_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
         message = SimpleNamespace(
             text="hi",
-            reply_text=AsyncMock(return_value=spinner_message),
+            reply_text=AsyncMock(return_value=progress_message),
         )
         update = SimpleNamespace(
             effective_message=message,
             effective_user=SimpleNamespace(id=123),
         )
         service = AsyncMock()
-        service.generate_reply.side_effect = self._wait_for_reply(
-            reply_started,
-            release_reply,
-        )
+        service.generate_reply.side_effect = self._progress_reply()
         controller = TelegramMessageController(service, AsyncMock(), Mock())
 
-        with patch(
-            "talking_telegram_bot.controllers.telegram_controller."
-            "SPINNER_UPDATE_SECONDS",
-            0.01,
-        ):
-            task = asyncio.create_task(controller.handle_text_message(update, None))
-            await reply_started.wait()
-            await asyncio.sleep(0.03)
-            release_reply.set()
-            await task
+        await controller.handle_text_message(update, None)
 
-        self.assertGreaterEqual(spinner_message.edit_text.await_count, 1)
+        progress_message.edit_text.assert_has_awaits(
+            [
+                call(WEB_SEARCH_PROGRESS_MESSAGE),
+                call(WEB_RESULTS_PROGRESS_MESSAGE),
+                call(FINAL_CHECK_PROGRESS_MESSAGE),
+            ],
+        )
 
     async def test_handle_text_message_logs_user_text_in_markdown_table(self) -> None:
-        spinner_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+        progress_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
         message = SimpleNamespace(
             text="hello from telegram",
-            reply_text=AsyncMock(return_value=spinner_message),
+            reply_text=AsyncMock(return_value=progress_message),
         )
         update = SimpleNamespace(
             effective_message=message,
@@ -135,7 +133,7 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("hello from telegram", log_output)
 
     async def test_handle_document_message_sends_service_reply(self) -> None:
-        spinner_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+        progress_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
         telegram_file = SimpleNamespace(
             download_as_bytearray=AsyncMock(return_value=bytearray(b"hello")),
         )
@@ -146,7 +144,7 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
         )
         message = SimpleNamespace(
             document=document,
-            reply_text=AsyncMock(return_value=spinner_message),
+            reply_text=AsyncMock(return_value=progress_message),
         )
         update = SimpleNamespace(
             effective_message=message,
@@ -175,14 +173,18 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
             "notes.txt",
             b"hello",
         )
-        message_service.generate_reply.assert_awaited_once_with("Analyze file", 123)
+        message_service.generate_reply.assert_awaited_once_with(
+            "Analyze file",
+            123,
+            progress_callback=ANY,
+        )
         message.reply_text.assert_has_awaits(
             [
-                call(LLM_THINKING_MESSAGE.format(spinner="-")),
+                call(LLM_THINKING_MESSAGE),
                 call("summary"),
             ],
         )
-        spinner_message.delete.assert_awaited_once()
+        progress_message.delete.assert_awaited_once()
 
     async def test_handle_document_message_rejects_unsupported_format(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())
@@ -237,7 +239,7 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
         message_service.generate_reply.assert_not_called()
 
     async def test_handle_document_message_handles_unreadable_file(self) -> None:
-        spinner_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+        progress_message = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
         telegram_file = SimpleNamespace(
             download_as_bytearray=AsyncMock(return_value=bytearray(b"\xff")),
         )
@@ -248,7 +250,7 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
         )
         message = SimpleNamespace(
             document=document,
-            reply_text=AsyncMock(return_value=spinner_message),
+            reply_text=AsyncMock(return_value=progress_message),
         )
         update = SimpleNamespace(
             effective_message=message,
@@ -270,24 +272,25 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         message.reply_text.assert_has_awaits(
             [
-                call(LLM_THINKING_MESSAGE.format(spinner="-")),
+                call(LLM_THINKING_MESSAGE),
                 call(FILE_READ_ERROR_MESSAGE),
             ],
         )
         message_service.generate_reply.assert_not_called()
 
-    def _wait_for_reply(
-        self,
-        reply_started: asyncio.Event,
-        release_reply: asyncio.Event,
-    ):
-        async def wait_for_reply(raw_text: str, user_id: int) -> str:
+    def _progress_reply(self):
+        async def progress_reply(
+            raw_text: str,
+            user_id: int,
+            progress_callback=None,
+        ) -> str:
             del raw_text, user_id
-            reply_started.set()
-            await release_reply.wait()
+            await progress_callback(WEB_SEARCH_PROGRESS_MESSAGE)
+            await progress_callback(WEB_RESULTS_PROGRESS_MESSAGE)
+            await progress_callback(FINAL_CHECK_PROGRESS_MESSAGE)
             return "hello"
 
-        return wait_for_reply
+        return progress_reply
 
     async def test_handle_models_command_sends_model_keyboard(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())
