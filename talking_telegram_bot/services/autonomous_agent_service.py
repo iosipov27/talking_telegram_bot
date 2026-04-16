@@ -113,6 +113,17 @@ class AutonomousAgentService:
         final_answer = payload.get("final_answer")
         if isinstance(final_answer, str):
             return final_answer
+        action = payload.get("action")
+        if action == "final_response":
+            response = payload.get("response")
+            if isinstance(response, str):
+                return response
+            args = payload.get("args")
+            if not isinstance(args, dict):
+                return None
+            response = args.get("response")
+            if isinstance(response, str):
+                return response
         return None
 
     async def _build_follow_up(self, payload: dict[str, Any]) -> str:

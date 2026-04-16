@@ -175,12 +175,6 @@ class OllamaClient:
                 ("Model", self._model),
                 ("Content Length", len(content)),
             ],
-            detail_tables=[
-                MarkdownTable(
-                    headers=("Role", "Content"),
-                    rows=(("assistant", content),),
-                ),
-            ],
         )
 
     def _format_model_list_request_log(self, url: str) -> str:

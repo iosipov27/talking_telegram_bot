@@ -1,6 +1,9 @@
+import json
 import re
+from typing import Any
 
 from talking_telegram_bot.constants.prompt_settings import AGENT_SYSTEM_PROMPT, DEFAULT_AGENT_ROLE
+from talking_telegram_bot.logging_utils import build_markdown_table
 from talking_telegram_bot.models.messages import ConversationMessage, UserMessage
 from talking_telegram_bot.services.autonomous_agent_service import (
     AutonomousAgentError,
@@ -42,7 +45,7 @@ class MessageService:
         reply_text = reply_text.strip()
         if not reply_text:
             raise MessageProcessingError("LLM returned an empty response.")
-        return reply_text
+        return self._format_json_reply(reply_text)
 
     def get_current_agent_role(self) -> str:
         return self._agent_role
@@ -83,3 +86,70 @@ class MessageService:
             role="system",
             content=AGENT_SYSTEM_PROMPT.format(agent_role=self._agent_role),
         )
+
+    def _format_json_reply(self, reply_text: str) -> str:
+        payload = self._parse_json_object(reply_text)
+        if payload is None:
+            return reply_text
+        final_response = self._extract_final_response(payload)
+        if final_response is not None:
+            return final_response
+        rows = tuple(self._build_json_rows(payload))
+        if not rows:
+            return reply_text
+        return build_markdown_table(("Field", "Value"), rows)
+
+    def _parse_json_object(self, reply_text: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(reply_text)
+        except ValueError:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    def _extract_final_response(self, payload: dict[str, Any]) -> str | None:
+        final_answer = payload.get("final_answer")
+        if isinstance(final_answer, str) and final_answer.strip():
+            return final_answer.strip()
+        action = payload.get("action")
+        if action == "final_response":
+            response = payload.get("response")
+            if isinstance(response, str) and response.strip():
+                return response.strip()
+            args = payload.get("args")
+            if not isinstance(args, dict):
+                return None
+            response = args.get("response")
+            if isinstance(response, str) and response.strip():
+                return response.strip()
+        return None
+
+    def _build_json_rows(
+        self,
+        payload: dict[str, Any],
+    ) -> list[tuple[str, str]]:
+        rows: list[tuple[str, str]] = []
+        self._append_json_rows(payload, "", rows)
+        return rows
+
+    def _append_json_rows(
+        self,
+        value: Any,
+        prefix: str,
+        rows: list[tuple[str, str]],
+    ) -> None:
+        if isinstance(value, dict):
+            for key, nested_value in value.items():
+                field_name = f"{prefix}.{key}" if prefix else key
+                if isinstance(nested_value, dict):
+                    self._append_json_rows(nested_value, field_name, rows)
+                    continue
+                rows.append((field_name, self._format_json_value(nested_value)))
+            return
+        rows.append((prefix or "value", self._format_json_value(value)))
+
+    def _format_json_value(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)

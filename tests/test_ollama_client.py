@@ -36,7 +36,7 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply.text, "signal")
         await http_client.aclose()
 
-    async def test_generate_reply_logs_request_and_response_tables(self) -> None:
+    async def test_generate_reply_logs_request_and_response_metadata(self) -> None:
         http_client = httpx.AsyncClient(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
@@ -73,8 +73,8 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"model": "test-model"', log_output)
         self.assertIn('"stream": false', log_output)
         self.assertIn(log_events.OLLAMA_RESPONSE_RECEIVED, log_output)
-        self.assertIn("| Role | Content |", log_output)
-        self.assertIn("signal", log_output)
+        self.assertIn("| Model | test-model |", log_output)
+        self.assertIn("| Content Length | 6 |", log_output)
         await http_client.aclose()
 
     async def test_generate_reply_uses_switched_model(self) -> None:

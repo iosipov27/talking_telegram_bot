@@ -61,6 +61,43 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MessageProcessingError):
             await service.generate_reply("hi", 123)
 
+    async def test_generate_reply_returns_final_response_from_json_payload(self) -> None:
+        agent_service = AsyncMock()
+        agent_service.run.return_value = (
+            '{"action":"final_response","args":{"response":"done"}}'
+        )
+        service = MessageService(agent_service)
+
+        reply_text = await service.generate_reply("hi", 123)
+
+        self.assertEqual(reply_text, "done")
+
+    async def test_generate_reply_returns_top_level_final_response(self) -> None:
+        agent_service = AsyncMock()
+        agent_service.run.return_value = (
+            '{"thought":"ready","action":"final_response","response":"done"}'
+        )
+        service = MessageService(agent_service)
+
+        reply_text = await service.generate_reply("hi", 123)
+
+        self.assertEqual(reply_text, "done")
+
+    async def test_generate_reply_formats_json_object_as_table(self) -> None:
+        agent_service = AsyncMock()
+        agent_service.run.return_value = (
+            '{"thought":"need summary","action":"inspect","args":{"filename":"bot.txt","file_read":true}}'
+        )
+        service = MessageService(agent_service)
+
+        reply_text = await service.generate_reply("hi", 123)
+
+        self.assertIn("| Field | Value |", reply_text)
+        self.assertIn("| thought | need summary |", reply_text)
+        self.assertIn("| action | inspect |", reply_text)
+        self.assertIn("| args.filename | bot.txt |", reply_text)
+        self.assertIn("| args.file_read | true |", reply_text)
+
     async def test_generate_reply_maps_agent_failures(self) -> None:
         agent_service = AsyncMock()
         agent_service.run.side_effect = AutonomousAgentError("down")
