@@ -35,8 +35,8 @@ class FileProcessingServiceTestCase(unittest.TestCase):
 
         prompt = service.build_llm_prompt("notes.txt", b"\xef\xbb\xbfhello")
 
-        self.assertIn("File name: notes.txt", prompt)
-        self.assertIn("File content:\nhello", prompt)
+        self.assertIn("Имя файла: notes.txt", prompt)
+        self.assertIn("Содержимое файла:\nhello", prompt)
 
     def test_build_llm_prompt_rejects_non_utf8_content(self) -> None:
         service = FileProcessingService(max_file_size_bytes=100)

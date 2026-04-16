@@ -36,9 +36,9 @@ class FileProcessingService:
         self.validate_metadata(file_name, len(content))
         file_text = self._decode_content(content)
         return (
-            "The user uploaded a file. Read the file content and respond based only on it.\n"
-            f"File name: {file_name}\n"
-            "File content:\n"
+            "Пользователь загрузил файл. Прочитай его содержимое и отвечай, опираясь только на него.\n"
+            f"Имя файла: {file_name}\n"
+            "Содержимое файла:\n"
             f"{file_text}"
         )
 

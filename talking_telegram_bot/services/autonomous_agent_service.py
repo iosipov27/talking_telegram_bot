@@ -107,10 +107,10 @@ class AutonomousAgentService:
         return ConversationMessage(
             role="system",
             content=(
-                "Current local date and time: "
+                "Текущие локальные дата и время: "
                 f"{self._get_current_datetime_iso()}. "
-                "Use this as the reference for dates and times like today, "
-                "tomorrow, yesterday, now, current, and latest."
+                "Используй это как ориентир для дат и времени, когда встречаются "
+                "слова вроде сегодня, завтра, вчера, сейчас, текущий и последний."
             ),
         )
 
