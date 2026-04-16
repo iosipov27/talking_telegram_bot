@@ -19,6 +19,9 @@ class Settings:
     ollama_model: str
     ollama_agent_role: str
     ollama_timeout_seconds: float
+    tavily_api_key: str
+    tavily_base_url: str
+    tavily_timeout_seconds: float
     telegram_concurrent_updates: int
 
 
@@ -30,6 +33,12 @@ def load_settings() -> Settings:
         ollama_model=_read_required_env("OLLAMA_MODEL"),
         ollama_agent_role=_read_text_env("OLLAMA_AGENT_ROLE", DEFAULT_AGENT_ROLE),
         ollama_timeout_seconds=_read_positive_float_env("OLLAMA_TIMEOUT_SECONDS"),
+        tavily_api_key=_read_required_env("TAVILY_API_KEY"),
+        tavily_base_url=_read_text_env("TAVILY_BASE_URL", "https://api.tavily.com"),
+        tavily_timeout_seconds=_read_positive_float_env_with_default(
+            "TAVILY_TIMEOUT_SECONDS",
+            default=15.0,
+        ),
         telegram_concurrent_updates=_read_positive_int_env(
             "TELEGRAM_CONCURRENT_UPDATES",
             default=8,
@@ -53,8 +62,19 @@ def _read_text_env(name: str, default: str) -> str:
 
 def _read_positive_float_env(name: str) -> float:
     value = _read_required_env(name)
+    return _parse_positive_float(name, value)
+
+
+def _read_positive_float_env_with_default(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return _parse_positive_float(name, value)
+
+
+def _parse_positive_float(name: str, raw_value: str) -> float:
     try:
-        number = float(value)
+        number = float(raw_value)
     except ValueError as exc:
         raise SettingsError(f"Environment variable {name} must be a number.") from exc
     if number > 0:

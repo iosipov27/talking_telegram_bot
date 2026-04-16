@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+import json
+import unittest
+from unittest.mock import AsyncMock
+
+from talking_telegram_bot.constants.prompt_settings import AGENT_CONTINUE_PROMPT
+from talking_telegram_bot.models.messages import AssistantMessage
+from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
+from talking_telegram_bot.services.autonomous_agent_service import (
+    AutonomousAgentError,
+    AutonomousAgentService,
+)
+
+
+class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_run_returns_final_answer_from_json(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.return_value = AssistantMessage(
+            text='{"final_answer":"done"}',
+        )
+        service = AutonomousAgentService(ollama_client, AsyncMock())
+
+        reply_text = await service.run("system", "user task")
+
+        self.assertEqual(reply_text, "done")
+
+    async def test_run_returns_non_json_response_as_is(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.return_value = AssistantMessage(text="plain reply")
+        service = AutonomousAgentService(ollama_client, AsyncMock())
+
+        reply_text = await service.run("system", "user task")
+
+        self.assertEqual(reply_text, "plain reply")
+
+    async def test_run_executes_search_tool_and_continues(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.side_effect = [
+            AssistantMessage(
+                text='{"thought":"need web data","action":"search_web","args":{"query":"latest ollama release"}}',
+            ),
+            AssistantMessage(text='{"final_answer":"done with sources"}'),
+        ]
+        search_web_service = AsyncMock()
+        search_web_service.search_web.return_value = SearchWebResponse(
+            query="latest ollama release",
+            results=[
+                SearchWebResult(
+                    title="Release notes",
+                    url="https://example.com/release",
+                    content="Important changes",
+                ),
+            ],
+        )
+        service = AutonomousAgentService(ollama_client, search_web_service)
+
+        reply_text = await service.run("system", "user task")
+
+        self.assertEqual(reply_text, "done with sources")
+        search_web_service.search_web.assert_awaited_once_with("latest ollama release")
+        second_call_messages = ollama_client.generate_reply.await_args_list[1].args[0]
+        self.assertEqual(second_call_messages[2].role, "assistant")
+        observation = json.loads(second_call_messages[3].content)
+        self.assertEqual(observation["tool_name"], "search_web")
+        self.assertEqual(observation["tool_result"]["query"], "latest ollama release")
+        self.assertEqual(
+            observation["tool_result"]["results"][0]["title"],
+            "Release notes",
+        )
+
+    async def test_run_prompts_agent_to_continue_for_non_terminal_json(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.side_effect = [
+            AssistantMessage(text='{"thought":"still thinking"}'),
+            AssistantMessage(text='{"final_answer":"done"}'),
+        ]
+        service = AutonomousAgentService(ollama_client, AsyncMock())
+
+        reply_text = await service.run("system", "user task")
+
+        self.assertEqual(reply_text, "done")
+        second_call_messages = ollama_client.generate_reply.await_args_list[1].args[0]
+        self.assertEqual(second_call_messages[3].content, AGENT_CONTINUE_PROMPT)
+
+    async def test_run_raises_after_too_many_steps(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.return_value = AssistantMessage(
+            text='{"thought":"loop"}',
+        )
+        service = AutonomousAgentService(ollama_client, AsyncMock())
+
+        with self.assertRaises(AutonomousAgentError):
+            await service.run("system", "user task")
+

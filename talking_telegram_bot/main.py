@@ -13,8 +13,8 @@ from telegram.ext import (
     filters,
 )
 
-from talking_telegram_bot.clients.chat_history_client import ChatHistoryClient
 from talking_telegram_bot.clients.ollama_client import OllamaClient
+from talking_telegram_bot.clients.tavily_client import TavilyClient
 from talking_telegram_bot.config.settings import Settings, SettingsError, load_settings
 from talking_telegram_bot.constants.log_events import SETTINGS_LOAD_FAILED
 from talking_telegram_bot.constants.logging_settings import (
@@ -32,8 +32,10 @@ from talking_telegram_bot.controllers.telegram_controller import (
     TelegramMessageController,
 )
 from talking_telegram_bot.logging_utils import MarkdownLogFormatter
+from talking_telegram_bot.services.autonomous_agent_service import AutonomousAgentService
 from talking_telegram_bot.services.message_service import MessageService
 from talking_telegram_bot.services.model_service import ModelService
+from talking_telegram_bot.services.search_web_service import SearchWebService
 
 
 def main() -> None:
@@ -49,15 +51,20 @@ def main() -> None:
         model=settings.ollama_model,
         timeout_seconds=settings.ollama_timeout_seconds,
     )
-    chat_history_client = ChatHistoryClient()
+    tavily_client = TavilyClient(
+        api_key=settings.tavily_api_key,
+        base_url=settings.tavily_base_url,
+        timeout_seconds=settings.tavily_timeout_seconds,
+    )
+    search_web_service = SearchWebService(tavily_client)
+    agent_service = AutonomousAgentService(ollama_client, search_web_service)
     message_service = MessageService(
-        ollama_client,
-        chat_history_client,
+        agent_service,
         settings.ollama_agent_role,
     )
     model_service = ModelService(ollama_client)
     controller = TelegramMessageController(message_service, model_service)
-    application = _build_application(settings, controller, ollama_client)
+    application = _build_application(settings, controller, ollama_client, tavily_client)
     application.run_polling()
 
 
@@ -65,11 +72,12 @@ def _build_application(
     settings: Settings,
     controller: TelegramMessageController,
     ollama_client: OllamaClient,
+    tavily_client: TavilyClient,
 ) -> Application:
     builder = ApplicationBuilder()
     builder = builder.token(settings.telegram_bot_token)
     builder = builder.concurrent_updates(settings.telegram_concurrent_updates)
-    builder = builder.post_shutdown(_build_shutdown_callback(ollama_client))
+    builder = builder.post_shutdown(_build_shutdown_callback(ollama_client, tavily_client))
     application = builder.build()
     application.add_handler(
         CommandHandler(MODELS_COMMAND, controller.handle_models_command),
@@ -92,10 +100,14 @@ def _build_application(
     return application
 
 
-def _build_shutdown_callback(ollama_client: OllamaClient):
+def _build_shutdown_callback(
+    ollama_client: OllamaClient,
+    tavily_client: TavilyClient,
+):
     async def shutdown_callback(application: Application) -> None:
         del application
         await ollama_client.close()
+        await tavily_client.close()
 
     return shutdown_callback
 
