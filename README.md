@@ -44,7 +44,7 @@ Fill the local `.env` file:
 TELEGRAM_BOT_TOKEN=your-telegram-bot-token
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3.5:0.8b
-OLLAMA_AGENT_ROLE=опытный программист
+OLLAMA_AGENT_ROLE=анонимный бот
 OLLAMA_TIMEOUT_SECONDS=60
 ```
 
@@ -65,7 +65,7 @@ Open Telegram, send a text message to your bot, and wait for the reply.
 Each user request includes a system prompt in the LLM context:
 
 ```text
-Ты опытный программист и отвечаешь кратко и по делу.
+Ты помощник и отвечаешь кратко и по делу.
 ```
 
 The default role comes from `OLLAMA_AGENT_ROLE` in `.env`.

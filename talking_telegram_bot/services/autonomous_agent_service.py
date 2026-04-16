@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from typing import Any
 
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
+from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.prompt_settings import (
     AGENT_CONTINUE_PROMPT,
     AGENT_MAX_STEPS,
 )
+from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
 from talking_telegram_bot.models.agent import AgentToolCall
 from talking_telegram_bot.models.messages import ConversationMessage
 from talking_telegram_bot.services.search_web_service import (
     SearchWebService,
     SearchWebServiceError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AutonomousAgentError(RuntimeError):
@@ -35,11 +40,12 @@ class AutonomousAgentService:
             ConversationMessage(role="system", content=system_prompt),
             ConversationMessage(role="user", content=user_prompt),
         ]
-        for _ in range(AGENT_MAX_STEPS):
+        for step_number in range(1, AGENT_MAX_STEPS + 1):
             response_text = await self._request_step(messages)
             payload = self._parse_json_object(response_text)
             if payload is None:
                 return response_text
+            self._log_thought(step_number, payload)
             final_answer = self._read_final_answer(payload)
             if final_answer is not None:
                 return final_answer
@@ -116,3 +122,23 @@ class AutonomousAgentService:
             ensure_ascii=False,
         )
 
+    def _log_thought(self, step_number: int, payload: dict[str, Any]) -> None:
+        thought = payload.get("thought")
+        if not isinstance(thought, str) or not thought.strip():
+            return
+        action = payload.get("action")
+        logger.info(
+            format_markdown_event(
+                log_events.AGENT_THOUGHT_RECEIVED,
+                [
+                    ("Step", step_number),
+                    ("Action", action if isinstance(action, str) else "-"),
+                ],
+                detail_tables=[
+                    MarkdownTable(
+                        headers=("Type", "Content"),
+                        rows=(("thought", thought),),
+                    ),
+                ],
+            ),
+        )

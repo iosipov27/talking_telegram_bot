@@ -11,6 +11,7 @@ OLLAMA_REQUEST_SENT = "Ollama Request"
 OLLAMA_RESPONSE_RECEIVED = "Ollama Response"
 OLLAMA_MODEL_LIST_REQUEST_SENT = "Ollama Model List Request"
 OLLAMA_MODEL_LIST_RESPONSE_RECEIVED = "Ollama Model List Response"
+AGENT_THOUGHT_RECEIVED = "Agent Thought"
 
 MODELS_COMMAND_RECEIVED = "Telegram /models Command"
 MODEL_LIST_FAILED = "Failed to list Ollama models: %s"

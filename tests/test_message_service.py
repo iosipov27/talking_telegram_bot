@@ -30,7 +30,7 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         await service.generate_reply("  hi  ", 123)
 
         agent_service.run.assert_awaited_once_with(
-            AGENT_SYSTEM_PROMPT.format(agent_role="опытный программист"),
+            AGENT_SYSTEM_PROMPT.format(agent_role="помощник"),
             "hi",
         )
 
@@ -89,4 +89,3 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(AgentRoleSelectionError):
             service.set_agent_role("   ")
-

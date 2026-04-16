@@ -4,6 +4,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock
 
+from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.prompt_settings import AGENT_CONTINUE_PROMPT
 from talking_telegram_bot.models.messages import AssistantMessage
 from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
@@ -93,3 +94,36 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(AutonomousAgentError):
             await service.run("system", "user task")
 
+    async def test_run_logs_agent_thoughts(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.side_effect = [
+            AssistantMessage(
+                text='{"thought":"need web data","action":"search_web","args":{"query":"latest ollama release"}}',
+            ),
+            AssistantMessage(text='{"final_answer":"done"}'),
+        ]
+        search_web_service = AsyncMock()
+        search_web_service.search_web.return_value = SearchWebResponse(
+            query="latest ollama release",
+            results=[
+                SearchWebResult(
+                    title="Release notes",
+                    url="https://example.com/release",
+                    content="Important changes",
+                ),
+            ],
+        )
+        service = AutonomousAgentService(ollama_client, search_web_service)
+
+        with self.assertLogs(
+            "talking_telegram_bot.services.autonomous_agent_service",
+            level="INFO",
+        ) as logs:
+            reply_text = await service.run("system", "user task")
+
+        self.assertEqual(reply_text, "done")
+        log_output = "\n".join(logs.output)
+        self.assertIn(log_events.AGENT_THOUGHT_RECEIVED, log_output)
+        self.assertIn("| Step | 1 |", log_output)
+        self.assertIn("| Action | search_web |", log_output)
+        self.assertIn("| thought | need web data |", log_output)

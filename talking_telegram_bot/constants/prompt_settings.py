@@ -1,4 +1,4 @@
-DEFAULT_AGENT_ROLE = "опытный программист"
+DEFAULT_AGENT_ROLE = "помощник"
 AGENT_MAX_STEPS = 8
 AGENT_CONTINUE_PROMPT = (
     '{"instruction": "Continue the agent loop. Reply with JSON only."}'

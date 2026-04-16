@@ -64,3 +64,32 @@ class LoggingUtilsTestCase(unittest.TestCase):
         self.assertIn("\033[36m[INFO]", formatted)
         self.assertIn("talking_telegram_bot.tests", formatted)
         self.assertTrue(formatted.endswith("\nhello"))
+
+    def test_markdown_log_formatter_renders_event_as_console_ui(self) -> None:
+        formatter = MarkdownLogFormatter(use_colors=True)
+        record = logging.LogRecord(
+            name="talking_telegram_bot.tests",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg=format_markdown_event(
+                "Telegram Reply",
+                [("Text Length", 53)],
+                detail_tables=[
+                    MarkdownTable(
+                        headers=("Role", "Content"),
+                        rows=(("assistant", "LLM is unavailable."),),
+                    ),
+                ],
+            ),
+            args=(),
+            exc_info=None,
+        )
+
+        formatted = formatter.format(record)
+
+        self.assertIn("Telegram Reply", formatted)
+        self.assertIn("╭", formatted)
+        self.assertIn("│", formatted)
+        self.assertIn("assistant", formatted)
+        self.assertNotIn("| Field | Value |", formatted)

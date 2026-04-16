@@ -217,11 +217,11 @@ class TelegramControllerTestCase(unittest.IsolatedAsyncioTestCase):
         )
         context = SimpleNamespace(args=[])
         message_service = Mock()
-        message_service.get_current_agent_role.return_value = "опытный программист"
+        message_service.get_current_agent_role.return_value = "анонимный бот"
         controller = TelegramMessageController(message_service, AsyncMock())
 
         await controller.handle_role_command(update, context)
 
         message.reply_text.assert_awaited_once_with(
-            ROLE_MESSAGE.format(agent_role="опытный программист"),
+            ROLE_MESSAGE.format(agent_role="анонимный бот"),
         )
