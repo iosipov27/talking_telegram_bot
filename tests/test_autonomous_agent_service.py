@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.prompt_settings import AGENT_CONTINUE_PROMPT
+from talking_telegram_bot.models.calculator import CalculatorResponse
 from talking_telegram_bot.models.messages import AssistantMessage
 from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
 from talking_telegram_bot.services.autonomous_agent_service import (
@@ -20,7 +21,7 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         ollama_client.generate_reply.return_value = AssistantMessage(
             text='{"final_answer":"done"}',
         )
-        service = AutonomousAgentService(ollama_client, AsyncMock())
+        service = AutonomousAgentService(ollama_client, AsyncMock(), AsyncMock())
 
         reply_text = await service.run("system", "user task")
 
@@ -29,7 +30,7 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_run_returns_non_json_response_as_is(self) -> None:
         ollama_client = AsyncMock()
         ollama_client.generate_reply.return_value = AssistantMessage(text="plain reply")
-        service = AutonomousAgentService(ollama_client, AsyncMock())
+        service = AutonomousAgentService(ollama_client, AsyncMock(), AsyncMock())
 
         reply_text = await service.run("system", "user task")
 
@@ -54,7 +55,11 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
             ],
         )
-        service = AutonomousAgentService(ollama_client, search_web_service)
+        service = AutonomousAgentService(
+            ollama_client,
+            search_web_service,
+            AsyncMock(),
+        )
 
         reply_text = await service.run("system", "user task")
 
@@ -76,7 +81,7 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
             AssistantMessage(text='{"thought":"still thinking"}'),
             AssistantMessage(text='{"final_answer":"done"}'),
         ]
-        service = AutonomousAgentService(ollama_client, AsyncMock())
+        service = AutonomousAgentService(ollama_client, AsyncMock(), AsyncMock())
 
         reply_text = await service.run("system", "user task")
 
@@ -89,7 +94,7 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         ollama_client.generate_reply.return_value = AssistantMessage(
             text='{"thought":"loop"}',
         )
-        service = AutonomousAgentService(ollama_client, AsyncMock())
+        service = AutonomousAgentService(ollama_client, AsyncMock(), AsyncMock())
 
         with self.assertRaises(AutonomousAgentError):
             await service.run("system", "user task")
@@ -113,7 +118,11 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
                 ),
             ],
         )
-        service = AutonomousAgentService(ollama_client, search_web_service)
+        service = AutonomousAgentService(
+            ollama_client,
+            search_web_service,
+            AsyncMock(),
+        )
 
         with self.assertLogs(
             "talking_telegram_bot.services.autonomous_agent_service",
@@ -127,3 +136,39 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("| Step | 1 |", log_output)
         self.assertIn("| Action | search_web |", log_output)
         self.assertIn("| thought | need web data |", log_output)
+
+    async def test_run_executes_calculator_tool_and_continues(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.side_effect = [
+            AssistantMessage(
+                text='{"thought":"need a calculation","action":"calculator","args":{"expression":"sqrt(2)"}}',
+            ),
+            AssistantMessage(text='{"final_answer":"done with math"}'),
+        ]
+        calculator_service = Mock()
+        calculator_service.calculate.return_value = CalculatorResponse(
+            expression="sqrt(2)",
+            result="sqrt(2)",
+            approximation="1.4142135623730951",
+        )
+        service = AutonomousAgentService(
+            ollama_client,
+            AsyncMock(),
+            calculator_service,
+        )
+
+        reply_text = await service.run("system", "user task")
+
+        self.assertEqual(reply_text, "done with math")
+        calculator_service.calculate.assert_called_once_with("sqrt(2)")
+        second_call_messages = ollama_client.generate_reply.await_args_list[1].args[0]
+        observation = json.loads(second_call_messages[3].content)
+        self.assertEqual(observation["tool_name"], "calculator")
+        self.assertEqual(
+            observation["tool_result"],
+            {
+                "expression": "sqrt(2)",
+                "result": "sqrt(2)",
+                "approximation": "1.4142135623730951",
+            },
+        )

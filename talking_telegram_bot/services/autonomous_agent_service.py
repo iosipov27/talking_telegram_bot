@@ -14,6 +14,10 @@ from talking_telegram_bot.constants.prompt_settings import (
 from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
 from talking_telegram_bot.models.agent import AgentToolCall
 from talking_telegram_bot.models.messages import ConversationMessage
+from talking_telegram_bot.services.calculator_service import (
+    CalculatorService,
+    CalculatorServiceError,
+)
 from talking_telegram_bot.services.search_web_service import (
     SearchWebService,
     SearchWebServiceError,
@@ -31,9 +35,11 @@ class AutonomousAgentService:
         self,
         ollama_client: OllamaClient,
         search_web_service: SearchWebService,
+        calculator_service: CalculatorService,
     ) -> None:
         self._ollama_client = ollama_client
         self._search_web_service = search_web_service
+        self._calculator_service = calculator_service
 
     async def run(self, system_prompt: str, user_prompt: str) -> str:
         messages = [
@@ -85,10 +91,15 @@ class AutonomousAgentService:
         tool_call = self._read_tool_call(payload)
         if tool_call is None:
             return AGENT_CONTINUE_PROMPT
-        if tool_call.action != "search_web":
-            return self._build_error_observation(
-                f"Unknown tool: {tool_call.action}.",
-            )
+        if tool_call.action == "search_web":
+            return await self._run_search_web(tool_call)
+        if tool_call.action == "calculator":
+            return self._run_calculator(tool_call)
+        return self._build_error_observation(
+            f"Unknown tool: {tool_call.action}.",
+        )
+
+    async def _run_search_web(self, tool_call: AgentToolCall) -> str:
         query = tool_call.args.get("query")
         if not isinstance(query, str):
             return self._build_error_observation(
@@ -98,15 +109,27 @@ class AutonomousAgentService:
             search_response = await self._search_web_service.search_web(query)
         except SearchWebServiceError as exc:
             raise AutonomousAgentError("Web search is unavailable.") from exc
-        return json.dumps(
+        return self._build_tool_observation(
+            tool_call.action,
             {
-                "tool_name": tool_call.action,
-                "tool_result": {
-                    "query": search_response.query,
-                    "results": [asdict(result) for result in search_response.results],
-                },
+                "query": search_response.query,
+                "results": [asdict(result) for result in search_response.results],
             },
-            ensure_ascii=False,
+        )
+
+    def _run_calculator(self, tool_call: AgentToolCall) -> str:
+        expression = tool_call.args.get("expression")
+        if not isinstance(expression, str):
+            return self._build_error_observation(
+                "Tool calculator requires a string expression.",
+            )
+        try:
+            calculator_response = self._calculator_service.calculate(expression)
+        except CalculatorServiceError as exc:
+            raise AutonomousAgentError("Calculator is unavailable.") from exc
+        return self._build_tool_observation(
+            tool_call.action,
+            asdict(calculator_response),
         )
 
     def _read_tool_call(self, payload: dict[str, Any]) -> AgentToolCall | None:
@@ -115,6 +138,19 @@ class AutonomousAgentService:
         if not isinstance(action, str) or not isinstance(args, dict):
             return None
         return AgentToolCall(action=action, args=args)
+
+    def _build_tool_observation(
+        self,
+        tool_name: str,
+        tool_result: dict[str, Any],
+    ) -> str:
+        return json.dumps(
+            {
+                "tool_name": tool_name,
+                "tool_result": tool_result,
+            },
+            ensure_ascii=False,
+        )
 
     def _build_error_observation(self, error_message: str) -> str:
         return json.dumps(

@@ -9,7 +9,8 @@ AGENT_SYSTEM_PROMPT = (
     "Think step by step and use tools when needed. "
     "Never guess tool results. "
     "Always reply with JSON only. "
-    'For tool use reply with {{"thought":"...","action":"search_web","args":{{"query":"..."}}}}. '
+    'For web search reply with {{"thought":"...","action":"search_web","args":{{"query":"..."}}}}. '
+    'For calculations reply with {{"thought":"...","action":"calculator","args":{{"expression":"..."}}}}. '
     'For the final response reply with {{"final_answer":"..."}}. '
     "If you receive a JSON message with a tool result, use it as an observation. "
     "Do not say you are an AI unless asked directly. "

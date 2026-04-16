@@ -33,6 +33,7 @@ from talking_telegram_bot.controllers.telegram_controller import (
 )
 from talking_telegram_bot.logging_utils import MarkdownLogFormatter
 from talking_telegram_bot.services.autonomous_agent_service import AutonomousAgentService
+from talking_telegram_bot.services.calculator_service import CalculatorService
 from talking_telegram_bot.services.message_service import MessageService
 from talking_telegram_bot.services.model_service import ModelService
 from talking_telegram_bot.services.search_web_service import SearchWebService
@@ -57,7 +58,12 @@ def main() -> None:
         timeout_seconds=settings.tavily_timeout_seconds,
     )
     search_web_service = SearchWebService(tavily_client)
-    agent_service = AutonomousAgentService(ollama_client, search_web_service)
+    calculator_service = CalculatorService()
+    agent_service = AutonomousAgentService(
+        ollama_client,
+        search_web_service,
+        calculator_service,
+    )
     message_service = MessageService(
         agent_service,
         settings.ollama_agent_role,
