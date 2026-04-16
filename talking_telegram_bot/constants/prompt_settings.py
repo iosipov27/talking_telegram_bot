@@ -1,11 +1,10 @@
-DEFAULT_AGENT_ROLE = "помощник"
+DEFAULT_AGENT_ROLE = "autonomous AI agent"
 AGENT_MAX_STEPS = 8
 AGENT_CONTINUE_PROMPT = (
     '{"instruction": "Continue the agent loop. Reply with JSON only."}'
 )
 AGENT_SYSTEM_PROMPT = (
     "You are {agent_role}. "
-    "You are an autonomous AI agent. "
     "Think step by step and use tools when needed. "
     "Never guess tool results. "
     "Always reply with JSON only. "

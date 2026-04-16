@@ -34,6 +34,7 @@ from talking_telegram_bot.controllers.telegram_controller import (
 from talking_telegram_bot.logging_utils import MarkdownLogFormatter
 from talking_telegram_bot.services.autonomous_agent_service import AutonomousAgentService
 from talking_telegram_bot.services.calculator_service import CalculatorService
+from talking_telegram_bot.services.file_processing_service import FileProcessingService
 from talking_telegram_bot.services.message_service import MessageService
 from talking_telegram_bot.services.model_service import ModelService
 from talking_telegram_bot.services.search_web_service import SearchWebService
@@ -69,7 +70,12 @@ def main() -> None:
         settings.ollama_agent_role,
     )
     model_service = ModelService(ollama_client)
-    controller = TelegramMessageController(message_service, model_service)
+    file_processing_service = FileProcessingService()
+    controller = TelegramMessageController(
+        message_service,
+        model_service,
+        file_processing_service,
+    )
     application = _build_application(settings, controller, ollama_client, tavily_client)
     application.run_polling()
 
@@ -95,6 +101,12 @@ def _build_application(
         CallbackQueryHandler(
             controller.handle_model_selection,
             pattern=f"^{MODEL_CALLBACK_PREFIX}",
+        ),
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.Document.ALL,
+            controller.handle_document_message,
         ),
     )
     application.add_handler(

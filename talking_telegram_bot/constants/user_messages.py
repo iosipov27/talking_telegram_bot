@@ -1,6 +1,9 @@
 SAFE_LLM_ERROR_MESSAGE = "LLM is currently unavailable. Please try again later."
 SAFE_MODEL_ERROR_MESSAGE = "Model list is currently unavailable. Please try again later."
 LLM_THINKING_MESSAGE = "{spinner} LLM is thinking..."
+UNSUPPORTED_FILE_MESSAGE = "Unsupported file format. Please upload one of: .txt, .md, .json, .csv."
+FILE_TOO_LARGE_MESSAGE = "File is too large. Maximum supported size is {max_file_size_mb} MB."
+FILE_READ_ERROR_MESSAGE = "Could not read the file. Please upload a UTF-8 encoded .txt, .md, .json, or .csv file."
 
 MODEL_LIST_MESSAGE = "Current Ollama model: {current_model}\nSelect a model:"
 MODEL_SELECTED_MESSAGE = "Current Ollama model: {selected_model}"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.prompt_settings import AGENT_CONTINUE_PROMPT
@@ -23,9 +23,17 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         )
         service = AutonomousAgentService(ollama_client, AsyncMock(), AsyncMock())
 
-        reply_text = await service.run("system", "user task")
+        with patch.object(
+            service,
+            "_get_current_datetime_iso",
+            return_value="2026-04-16T23:10:00+03:00",
+        ):
+            reply_text = await service.run("system", "user task")
 
         self.assertEqual(reply_text, "done")
+        request_messages = ollama_client.generate_reply.await_args.args[0]
+        self.assertEqual(request_messages[1].role, "system")
+        self.assertIn("2026-04-16T23:10:00+03:00", request_messages[1].content)
 
     async def test_run_returns_non_json_response_as_is(self) -> None:
         ollama_client = AsyncMock()
@@ -66,8 +74,8 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply_text, "done with sources")
         search_web_service.search_web.assert_awaited_once_with("latest ollama release")
         second_call_messages = ollama_client.generate_reply.await_args_list[1].args[0]
-        self.assertEqual(second_call_messages[2].role, "assistant")
-        observation = json.loads(second_call_messages[3].content)
+        self.assertEqual(second_call_messages[3].role, "assistant")
+        observation = json.loads(second_call_messages[4].content)
         self.assertEqual(observation["tool_name"], "search_web")
         self.assertEqual(observation["tool_result"]["query"], "latest ollama release")
         self.assertEqual(
@@ -87,7 +95,7 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(reply_text, "done")
         second_call_messages = ollama_client.generate_reply.await_args_list[1].args[0]
-        self.assertEqual(second_call_messages[3].content, AGENT_CONTINUE_PROMPT)
+        self.assertEqual(second_call_messages[4].content, AGENT_CONTINUE_PROMPT)
 
     async def test_run_raises_after_too_many_steps(self) -> None:
         ollama_client = AsyncMock()
@@ -162,7 +170,7 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reply_text, "done with math")
         calculator_service.calculate.assert_called_once_with("sqrt(2)")
         second_call_messages = ollama_client.generate_reply.await_args_list[1].args[0]
-        observation = json.loads(second_call_messages[3].content)
+        observation = json.loads(second_call_messages[4].content)
         self.assertEqual(observation["tool_name"], "calculator")
         self.assertEqual(
             observation["tool_result"],

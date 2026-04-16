@@ -30,7 +30,7 @@ class MessageServiceTestCase(unittest.IsolatedAsyncioTestCase):
         await service.generate_reply("  hi  ", 123)
 
         agent_service.run.assert_awaited_once_with(
-            AGENT_SYSTEM_PROMPT.format(agent_role="помощник"),
+            AGENT_SYSTEM_PROMPT.format(agent_role="autonomous AI agent"),
             "hi",
         )
 

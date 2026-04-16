@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from dataclasses import asdict
 from typing import Any
 
@@ -63,14 +64,41 @@ class AutonomousAgentService:
         raise AutonomousAgentError("Agent exceeded the maximum number of steps.")
 
     async def _request_step(self, messages: list[ConversationMessage]) -> str:
+        request_messages = self._build_request_messages(messages)
         try:
-            assistant_message = await self._ollama_client.generate_reply(messages)
+            assistant_message = await self._ollama_client.generate_reply(request_messages)
         except OllamaClientError as exc:
             raise AutonomousAgentError("LLM is unavailable.") from exc
         response_text = assistant_message.text.strip()
         if response_text:
             return response_text
         raise AutonomousAgentError("LLM returned an empty response.")
+
+    def _build_request_messages(
+        self,
+        messages: list[ConversationMessage],
+    ) -> list[ConversationMessage]:
+        current_datetime_message = self._build_current_datetime_message()
+        if not messages:
+            return [current_datetime_message]
+        first_message, *other_messages = messages
+        if first_message.role != "system":
+            return [current_datetime_message, *messages]
+        return [first_message, current_datetime_message, *other_messages]
+
+    def _build_current_datetime_message(self) -> ConversationMessage:
+        return ConversationMessage(
+            role="system",
+            content=(
+                "Current local date and time: "
+                f"{self._get_current_datetime_iso()}. "
+                "Use this as the reference for dates and times like today, "
+                "tomorrow, yesterday, now, current, and latest."
+            ),
+        )
+
+    def _get_current_datetime_iso(self) -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
 
     def _parse_json_object(self, response_text: str) -> dict[str, Any] | None:
         try:

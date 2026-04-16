@@ -12,6 +12,8 @@ from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.telegram import MODEL_CALLBACK_PREFIX
 from talking_telegram_bot.constants.user_messages import (
     CURRENT_MODEL_BUTTON_LABEL,
+    FILE_READ_ERROR_MESSAGE,
+    FILE_TOO_LARGE_MESSAGE,
     LLM_THINKING_MESSAGE,
     MODEL_LIST_MESSAGE,
     MODEL_SELECTED_MESSAGE,
@@ -19,8 +21,15 @@ from talking_telegram_bot.constants.user_messages import (
     ROLE_UPDATED_MESSAGE,
     SAFE_LLM_ERROR_MESSAGE,
     SAFE_MODEL_ERROR_MESSAGE,
+    UNSUPPORTED_FILE_MESSAGE,
 )
 from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
+from talking_telegram_bot.services.file_processing_service import (
+    FileProcessingError,
+    FileProcessingService,
+    FileTooLargeError,
+    UnsupportedFileTypeError,
+)
 from talking_telegram_bot.services.model_service import ModelSelectionError, ModelService
 from talking_telegram_bot.services.message_service import (
     AgentRoleSelectionError,
@@ -46,9 +55,11 @@ class TelegramMessageController:
         self,
         message_service: MessageService,
         model_service: ModelService,
+        file_processing_service: FileProcessingService,
     ) -> None:
         self._message_service = message_service
         self._model_service = model_service
+        self._file_processing_service = file_processing_service
 
     async def handle_text_message(
         self,
@@ -67,6 +78,44 @@ class TelegramMessageController:
             await self._send_reply(message, SAFE_LLM_ERROR_MESSAGE)
             return
         await self._reply_to_text_message(message, user_id, started_at)
+
+    async def handle_document_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        del context
+        message = update.effective_message
+        if message is None:
+            return
+        document = getattr(message, "document", None)
+        if document is None:
+            return
+        started_at = monotonic()
+        file_name = getattr(document, "file_name", None)
+        file_size = getattr(document, "file_size", None)
+        self._log_document_message_received(update, file_name, file_size)
+        user_id = self._get_user_id(update)
+        if user_id is None:
+            logger.warning(log_events.DOCUMENT_MESSAGE_USER_ID_MISSING)
+            await self._send_reply(message, SAFE_LLM_ERROR_MESSAGE)
+            return
+        try:
+            self._file_processing_service.validate_metadata(file_name, file_size)
+        except UnsupportedFileTypeError as exc:
+            logger.warning(log_events.DOCUMENT_MESSAGE_PROCESSING_FAILED, exc)
+            await self._send_reply(message, UNSUPPORTED_FILE_MESSAGE)
+            return
+        except FileTooLargeError as exc:
+            logger.warning(log_events.DOCUMENT_MESSAGE_PROCESSING_FAILED, exc)
+            await self._send_reply(message, self._format_file_too_large_message())
+            return
+        await self._reply_to_document_message(
+            message,
+            document,
+            user_id,
+            started_at,
+        )
 
     async def _reply_to_text_message(
         self,
@@ -92,6 +141,43 @@ class TelegramMessageController:
         await self._send_reply(message, reply_text)
         if is_successful:
             self._log_text_message_processed(started_at, reply_text)
+
+    async def _reply_to_document_message(
+        self,
+        message,
+        document,
+        user_id: int,
+        started_at: float,
+    ) -> None:
+        spinner = await self._start_thinking_spinner(message)
+        reply_text = SAFE_LLM_ERROR_MESSAGE
+        is_successful = False
+        try:
+            document_content = await self._download_document_content(document)
+            prompt_text = self._file_processing_service.build_llm_prompt(
+                getattr(document, "file_name", None),
+                document_content,
+            )
+            reply_text = await self._message_service.generate_reply(
+                prompt_text,
+                user_id,
+            )
+            is_successful = True
+        except FileTooLargeError as exc:
+            logger.warning(log_events.DOCUMENT_MESSAGE_PROCESSING_FAILED, exc)
+            reply_text = self._format_file_too_large_message()
+        except FileProcessingError as exc:
+            logger.warning(log_events.DOCUMENT_MESSAGE_PROCESSING_FAILED, exc)
+            reply_text = FILE_READ_ERROR_MESSAGE
+        except MessageProcessingError as exc:
+            logger.warning(log_events.DOCUMENT_MESSAGE_PROCESSING_FAILED, exc)
+        except Exception:
+            logger.exception(log_events.UNEXPECTED_TELEGRAM_HANDLER_ERROR)
+        finally:
+            await self._stop_thinking_spinner(spinner)
+        await self._send_reply(message, reply_text)
+        if is_successful:
+            self._log_document_message_processed(started_at, reply_text)
 
     async def handle_models_command(
         self,
@@ -333,6 +419,40 @@ class TelegramMessageController:
             ),
         )
 
+    def _log_document_message_received(
+        self,
+        update: Update,
+        file_name: str | None,
+        file_size: int | None,
+    ) -> None:
+        logger.info(
+            format_markdown_event(
+                log_events.DOCUMENT_MESSAGE_RECEIVED,
+                [
+                    ("Chat ID", self._get_chat_id(update)),
+                    ("User ID", self._get_user_id(update)),
+                    ("File Name", file_name or "(missing)"),
+                    ("File Size", file_size or 0),
+                ],
+            ),
+        )
+
+    def _log_document_message_processed(
+        self,
+        started_at: float,
+        reply_text: str,
+    ) -> None:
+        elapsed_seconds = monotonic() - started_at
+        logger.info(
+            format_markdown_event(
+                log_events.DOCUMENT_MESSAGE_PROCESSED,
+                [
+                    ("Reply Length", len(reply_text)),
+                    ("Elapsed Seconds", f"{elapsed_seconds:.3f}"),
+                ],
+            ),
+        )
+
     def _get_chat_id(self, update: Update) -> int | None:
         chat = getattr(update, "effective_chat", None)
         return getattr(chat, "id", None)
@@ -351,6 +471,11 @@ class TelegramMessageController:
 
     def _format_model_list(self, current_model: str) -> str:
         return MODEL_LIST_MESSAGE.format(current_model=current_model)
+
+    def _format_file_too_large_message(self) -> str:
+        return FILE_TOO_LARGE_MESSAGE.format(
+            max_file_size_mb=self._file_processing_service.max_file_size_megabytes,
+        )
 
     def _format_role_message(self) -> str:
         return ROLE_MESSAGE.format(
@@ -389,3 +514,11 @@ class TelegramMessageController:
         if not args:
             return ""
         return " ".join(args).strip()
+
+    async def _download_document_content(self, document) -> bytes:
+        try:
+            telegram_file = await document.get_file()
+            content = await telegram_file.download_as_bytearray()
+        except Exception as exc:
+            raise FileProcessingError("Telegram file download failed.") from exc
+        return bytes(content)
