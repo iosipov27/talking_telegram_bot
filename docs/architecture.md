@@ -29,6 +29,11 @@ talking_telegram_bot.__main__
 
 `main.py` now wires the new event-driven path. The old `TelegramMessageController`, `MessageService`, and `AutonomousAgentService` are still present as a compatibility layer and remain covered by the existing tests, but they are no longer the runtime path used by the app bootstrap.
 
+The active runtime now has three agent tools:
+- `search_web` for general current information;
+- `weather` for weather and forecast lookups through `wttr.in`;
+- `calculator` for deterministic math.
+
 ## Current Request Flows
 
 ### Text Message
@@ -57,6 +62,16 @@ TelegramDocumentController
   -> AgentRunWorkflow
   -> ToolExecutionRequested / ProgressUpdated / ReplyReady
   -> TelegramOutboundController
+```
+
+### Tool Dispatch
+
+```text
+AgentRunWorkflow
+  -> ToolExecutionRequested(action="search_web" | "weather" | "calculator")
+  -> SearchWebToolHandler | WeatherToolHandler | CalculatorToolHandler
+  -> tool observation
+  -> AgentRunWorkflow
 ```
 
 ### Model and Role Commands
@@ -112,6 +127,7 @@ TelegramCallbackController
 | `talking_telegram_bot/handlers/update_role_handler.py` | `UpdateRoleHandler` | Updates the runtime role and returns the selected role or current-role message | `RoleRuntimeService`, `InMemoryEventBus` |
 | `talking_telegram_bot/handlers/select_model_handler.py` | `SelectModelHandler` | Parses callback payloads, switches the runtime model, and emits callback text updates | `ModelRuntimeService`, `InMemoryEventBus` |
 | `talking_telegram_bot/handlers/search_web_tool_handler.py` | `SearchWebToolHandler` | Executes `search_web` tool requests and reports tool observations through a future | `SearchWebService`, `AgentResponseService`, `InMemoryEventBus` |
+| `talking_telegram_bot/handlers/weather_tool_handler.py` | `WeatherToolHandler` | Executes `weather` tool requests through `wttr.in` and reports tool observations through a future | `WeatherService`, `AgentResponseService`, `InMemoryEventBus` |
 | `talking_telegram_bot/handlers/calculator_tool_handler.py` | `CalculatorToolHandler` | Executes `calculator` tool requests and reports tool observations through a future | `CalculatorService`, `AgentResponseService` |
 
 ### Workflow
@@ -133,6 +149,7 @@ TelegramCallbackController
 | `talking_telegram_bot/services/model_runtime_service.py` | `ModelRuntimeService` | Stores and switches the in-memory active model | `OllamaClient` |
 | `talking_telegram_bot/services/file_processing_service.py` | `FileProcessingService` | Validates file type and size and turns bytes into document prompt text | none |
 | `talking_telegram_bot/services/conversation_context_service.py` | `ConversationContextService` | Wrapper around file-backed chat history and summaries for future conversational context wiring | `ChatHistoryClient` |
+| `talking_telegram_bot/services/weather_service.py` | `WeatherService` | Validates the requested location and maps `wttr.in` client failures to service-level errors | `WttrClient` |
 
 ### Clients
 
@@ -140,6 +157,7 @@ TelegramCallbackController
 |---|---|---|---|
 | `talking_telegram_bot/clients/ollama_client.py` | `OllamaClient` | Talks to Ollama over HTTP and maintains the runtime model name | `httpx.AsyncClient` |
 | `talking_telegram_bot/clients/tavily_client.py` | `TavilyClient` | Talks to Tavily over HTTP and converts payloads into search models | `httpx.AsyncClient` |
+| `talking_telegram_bot/clients/wttr_client.py` | `WttrClient` | Talks to `wttr.in` over HTTP and converts JSON payloads into weather models | `httpx.AsyncClient` |
 | `talking_telegram_bot/clients/chat_history_client.py` | `ChatHistoryClient` | Reads and writes file-backed per-user history and summaries | filesystem, `asyncio.to_thread()` |
 
 ### Message Contracts

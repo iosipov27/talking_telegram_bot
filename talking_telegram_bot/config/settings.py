@@ -22,6 +22,8 @@ class Settings:
     tavily_api_key: str
     tavily_base_url: str
     tavily_timeout_seconds: float
+    wttr_base_url: str
+    wttr_timeout_seconds: float
     telegram_concurrent_updates: int
 
 
@@ -38,6 +40,11 @@ def load_settings() -> Settings:
         tavily_timeout_seconds=_read_positive_float_env_with_default(
             "TAVILY_TIMEOUT_SECONDS",
             default=15.0,
+        ),
+        wttr_base_url=_read_text_env("WTTR_BASE_URL", "https://wttr.in"),
+        wttr_timeout_seconds=_read_positive_float_env_with_default(
+            "WTTR_TIMEOUT_SECONDS",
+            default=10.0,
         ),
         telegram_concurrent_updates=_read_positive_int_env(
             "TELEGRAM_CONCURRENT_UPDATES",

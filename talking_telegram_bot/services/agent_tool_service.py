@@ -6,6 +6,7 @@ from typing import Any
 
 from talking_telegram_bot.constants.prompt_settings import AGENT_CONTINUE_PROMPT
 from talking_telegram_bot.constants.user_messages import (
+    WEATHER_LOOKUP_PROGRESS_MESSAGE,
     WEB_RESULTS_PROGRESS_MESSAGE,
     WEB_SEARCH_PROGRESS_MESSAGE,
 )
@@ -18,6 +19,10 @@ from talking_telegram_bot.services.calculator_service import (
 from talking_telegram_bot.services.search_web_service import (
     SearchWebService,
     SearchWebServiceError,
+)
+from talking_telegram_bot.services.weather_service import (
+    WeatherService,
+    WeatherServiceError,
 )
 
 ProgressCallback = Callable[[str], Awaitable[None]]
@@ -33,10 +38,12 @@ class AgentToolService:
         response_service: AgentResponseService,
         search_web_service: SearchWebService,
         calculator_service: CalculatorService,
+        weather_service: WeatherService | None = None,
     ) -> None:
         self._response_service = response_service
         self._search_web_service = search_web_service
         self._calculator_service = calculator_service
+        self._weather_service = weather_service
 
     async def build_follow_up(
         self,
@@ -48,6 +55,8 @@ class AgentToolService:
             return AGENT_CONTINUE_PROMPT
         if tool_call.action == "search_web":
             return await self._run_search_web(tool_call, progress_callback)
+        if tool_call.action == "weather":
+            return await self._run_weather(tool_call, progress_callback)
         if tool_call.action == "calculator":
             return self._run_calculator(tool_call)
         return self._response_service.build_error_observation(
@@ -76,6 +85,28 @@ class AgentToolService:
                 "query": search_response.query,
                 "results": [asdict(result) for result in search_response.results],
             },
+        )
+
+    async def _run_weather(
+        self,
+        tool_call: AgentToolCall,
+        progress_callback: ProgressCallback | None,
+    ) -> str:
+        location = tool_call.args.get("location")
+        if not isinstance(location, str):
+            return self._response_service.build_error_observation(
+                "Tool weather requires a string location.",
+            )
+        if self._weather_service is None:
+            raise AgentToolExecutionError("Weather lookup is unavailable.")
+        await self._report_progress(progress_callback, WEATHER_LOOKUP_PROGRESS_MESSAGE)
+        try:
+            weather_response = await self._weather_service.get_weather(location)
+        except WeatherServiceError as exc:
+            raise AgentToolExecutionError("Weather lookup is unavailable.") from exc
+        return self._response_service.build_tool_observation(
+            tool_call.action,
+            asdict(weather_response),
         )
 
     def _run_calculator(self, tool_call: AgentToolCall) -> str:

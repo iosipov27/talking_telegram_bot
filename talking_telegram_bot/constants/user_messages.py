@@ -3,6 +3,7 @@ SAFE_MODEL_ERROR_MESSAGE = "Model list is currently unavailable. Please try agai
 LLM_THINKING_MESSAGE = "Думаю..."
 WEB_SEARCH_PROGRESS_MESSAGE = "Ищу в вебе..."
 WEB_RESULTS_PROGRESS_MESSAGE = "Нашел результаты, формирую ответ..."
+WEATHER_LOOKUP_PROGRESS_MESSAGE = "Проверяю погоду..."
 FINAL_CHECK_PROGRESS_MESSAGE = "Проверяю итог..."
 UNSUPPORTED_FILE_MESSAGE = "Unsupported file format. Please upload one of: .txt, .md, .json, .csv."
 FILE_TOO_LARGE_MESSAGE = "File is too large. Maximum supported size is {max_file_size_mb} MB."

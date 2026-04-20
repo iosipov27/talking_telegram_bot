@@ -21,6 +21,7 @@ from talking_telegram_bot.services.agent_tool_service import (
 )
 from talking_telegram_bot.services.calculator_service import CalculatorService
 from talking_telegram_bot.services.search_web_service import SearchWebService
+from talking_telegram_bot.services.weather_service import WeatherService
 
 logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str], Awaitable[None]]
@@ -36,6 +37,7 @@ class AutonomousAgentService:
         ollama_client: OllamaClient,
         search_web_service: SearchWebService,
         calculator_service: CalculatorService,
+        weather_service: WeatherService | None = None,
         request_builder_service: AgentRequestBuilderService | None = None,
         response_service: AgentResponseService | None = None,
         tool_service: AgentToolService | None = None,
@@ -50,6 +52,7 @@ class AutonomousAgentService:
             self._response_service,
             search_web_service,
             calculator_service,
+            weather_service,
         )
 
     async def run(

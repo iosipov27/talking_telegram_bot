@@ -111,7 +111,7 @@ class AgentRunWorkflow:
         tool_call = self._response_service.read_tool_call(payload)
         if tool_call is None:
             return AGENT_CONTINUE_PROMPT
-        if tool_call.action not in {"search_web", "calculator"}:
+        if tool_call.action not in {"search_web", "weather", "calculator"}:
             return self._response_service.build_error_observation(
                 f"Unknown tool: {tool_call.action}.",
             )

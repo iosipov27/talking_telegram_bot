@@ -8,12 +8,14 @@ from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.prompt_settings import AGENT_CONTINUE_PROMPT
 from talking_telegram_bot.constants.user_messages import (
     FINAL_CHECK_PROGRESS_MESSAGE,
+    WEATHER_LOOKUP_PROGRESS_MESSAGE,
     WEB_RESULTS_PROGRESS_MESSAGE,
     WEB_SEARCH_PROGRESS_MESSAGE,
 )
 from talking_telegram_bot.models.calculator import CalculatorResponse
 from talking_telegram_bot.models.messages import AssistantMessage
 from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
+from talking_telegram_bot.models.weather import WeatherForecastDay, WeatherResponse
 from talking_telegram_bot.services.autonomous_agent_service import (
     AutonomousAgentError,
     AutonomousAgentService,
@@ -258,4 +260,69 @@ class AutonomousAgentServiceTestCase(unittest.IsolatedAsyncioTestCase):
                 "result": "sqrt(2)",
                 "approximation": "1.4142135623730951",
             },
+        )
+
+    async def test_run_executes_weather_tool_and_continues(self) -> None:
+        ollama_client = AsyncMock()
+        ollama_client.generate_reply.side_effect = [
+            AssistantMessage(
+                text='{"thought":"need weather","action":"weather","args":{"location":"London"}}',
+            ),
+            AssistantMessage(text='{"final_answer":"done with weather"}'),
+        ]
+        weather_service = AsyncMock()
+        weather_service.get_weather.return_value = WeatherResponse(
+            requested_location="London",
+            resolved_location="London",
+            region="England",
+            country="United Kingdom",
+            observation_time="2026-04-20 08:29 PM",
+            condition="Patchy rain nearby",
+            temp_c="12",
+            temp_f="54",
+            feels_like_c="11",
+            feels_like_f="51",
+            humidity="47",
+            wind_speed_kmph="14",
+            wind_speed_miles="9",
+            wind_direction="NE",
+            visibility_km="10",
+            forecast=[
+                WeatherForecastDay(
+                    date="2026-04-20",
+                    condition="Sunny",
+                    min_temp_c="7",
+                    max_temp_c="15",
+                    min_temp_f="45",
+                    max_temp_f="59",
+                    sunrise="05:55 AM",
+                    sunset="08:05 PM",
+                ),
+            ],
+        )
+        service = AutonomousAgentService(
+            ollama_client,
+            AsyncMock(),
+            Mock(),
+            weather_service,
+        )
+        progress_callback = AsyncMock()
+
+        reply_text = await service.run(
+            "system",
+            "user task",
+            progress_callback=progress_callback,
+        )
+
+        self.assertEqual(reply_text, "done with weather")
+        weather_service.get_weather.assert_awaited_once_with("London")
+        second_call_messages = ollama_client.generate_reply.await_args_list[1].args[0]
+        observation = json.loads(second_call_messages[4].content)
+        self.assertEqual(observation["tool_name"], "weather")
+        self.assertEqual(observation["tool_result"]["resolved_location"], "London")
+        progress_callback.assert_has_awaits(
+            [
+                call(WEATHER_LOOKUP_PROGRESS_MESSAGE),
+                call(FINAL_CHECK_PROGRESS_MESSAGE),
+            ],
         )

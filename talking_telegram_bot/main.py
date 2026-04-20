@@ -18,6 +18,7 @@ from talking_telegram_bot.bus.dead_letter import DeadLetterWriter
 from talking_telegram_bot.bus.event_bus import InMemoryEventBus
 from talking_telegram_bot.clients.ollama_client import OllamaClient
 from talking_telegram_bot.clients.tavily_client import TavilyClient
+from talking_telegram_bot.clients.wttr_client import WttrClient
 from talking_telegram_bot.config.settings import Settings, SettingsError, load_settings
 from talking_telegram_bot.constants.log_events import SETTINGS_LOAD_FAILED
 from talking_telegram_bot.constants.logging_settings import (
@@ -58,6 +59,7 @@ from talking_telegram_bot.handlers.search_web_tool_handler import SearchWebToolH
 from talking_telegram_bot.handlers.select_model_handler import SelectModelHandler
 from talking_telegram_bot.handlers.show_role_handler import ShowRoleHandler
 from talking_telegram_bot.handlers.update_role_handler import UpdateRoleHandler
+from talking_telegram_bot.handlers.weather_tool_handler import WeatherToolHandler
 from talking_telegram_bot.logging_utils import MarkdownLogFormatter
 from talking_telegram_bot.messages.commands import (
     ListModels,
@@ -93,6 +95,7 @@ from talking_telegram_bot.services.model_runtime_service import ModelRuntimeServ
 from talking_telegram_bot.services.search_web_service import SearchWebService
 from talking_telegram_bot.services.prompt_builder_service import PromptBuilderService
 from talking_telegram_bot.services.role_runtime_service import RoleRuntimeService
+from talking_telegram_bot.services.weather_service import WeatherService
 from talking_telegram_bot.workflows.agent_run_workflow import AgentRunWorkflow
 
 
@@ -114,6 +117,10 @@ def main() -> None:
         base_url=settings.tavily_base_url,
         timeout_seconds=settings.tavily_timeout_seconds,
     )
+    wttr_client = WttrClient(
+        base_url=settings.wttr_base_url,
+        timeout_seconds=settings.wttr_timeout_seconds,
+    )
     dead_letter_writer = DeadLetterWriter()
     command_bus = InMemoryCommandBus(
         dead_letter_writer=dead_letter_writer,
@@ -124,6 +131,7 @@ def main() -> None:
         worker_count=max(4, settings.telegram_concurrent_updates),
     )
     search_web_service = SearchWebService(tavily_client)
+    weather_service = WeatherService(wttr_client)
     calculator_service = CalculatorService()
     role_runtime_service = RoleRuntimeService(settings.ollama_agent_role)
     model_runtime_service = ModelRuntimeService(ollama_client)
@@ -190,6 +198,10 @@ def main() -> None:
     )
     event_bus.subscribe(
         ToolExecutionRequested,
+        WeatherToolHandler(response_service, weather_service, event_bus),
+    )
+    event_bus.subscribe(
+        ToolExecutionRequested,
         CalculatorToolHandler(response_service, calculator_service),
     )
     for event_type in (
@@ -211,6 +223,7 @@ def main() -> None:
         callback_controller,
         ollama_client,
         tavily_client,
+        wttr_client,
         command_bus,
         event_bus,
     )
@@ -225,6 +238,7 @@ def _build_application(
     callback_controller: TelegramCallbackController,
     ollama_client: OllamaClient,
     tavily_client: TavilyClient,
+    wttr_client: WttrClient,
     command_bus: InMemoryCommandBus,
     event_bus: InMemoryEventBus,
 ) -> Application:
@@ -236,6 +250,7 @@ def _build_application(
         _build_shutdown_callback(
             ollama_client,
             tavily_client,
+            wttr_client,
             command_bus,
             event_bus,
         ),
@@ -283,6 +298,7 @@ def _build_startup_callback(
 def _build_shutdown_callback(
     ollama_client: OllamaClient,
     tavily_client: TavilyClient,
+    wttr_client: WttrClient,
     command_bus: InMemoryCommandBus,
     event_bus: InMemoryEventBus,
 ):
@@ -292,6 +308,7 @@ def _build_shutdown_callback(
         await event_bus.stop()
         await ollama_client.close()
         await tavily_client.close()
+        await wttr_client.close()
 
     return shutdown_callback
 
