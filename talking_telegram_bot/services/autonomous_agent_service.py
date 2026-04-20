@@ -1,34 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-import json
+from typing import Any
 import logging
 from datetime import datetime
-from dataclasses import asdict
-from typing import Any
 
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
 from talking_telegram_bot.constants import log_events
-from talking_telegram_bot.constants.prompt_settings import (
-    AGENT_CONTINUE_PROMPT,
-    AGENT_MAX_STEPS,
-)
-from talking_telegram_bot.constants.user_messages import (
-    FINAL_CHECK_PROGRESS_MESSAGE,
-    WEB_RESULTS_PROGRESS_MESSAGE,
-    WEB_SEARCH_PROGRESS_MESSAGE,
-)
+from talking_telegram_bot.constants.prompt_settings import AGENT_MAX_STEPS
+from talking_telegram_bot.constants.user_messages import FINAL_CHECK_PROGRESS_MESSAGE
 from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
-from talking_telegram_bot.models.agent import AgentToolCall
 from talking_telegram_bot.models.messages import ConversationMessage
-from talking_telegram_bot.services.calculator_service import (
-    CalculatorService,
-    CalculatorServiceError,
+from talking_telegram_bot.services.agent_request_builder_service import (
+    AgentRequestBuilderService,
 )
-from talking_telegram_bot.services.search_web_service import (
-    SearchWebService,
-    SearchWebServiceError,
+from talking_telegram_bot.services.agent_response_service import AgentResponseService
+from talking_telegram_bot.services.agent_tool_service import (
+    AgentToolExecutionError,
+    AgentToolService,
 )
+from talking_telegram_bot.services.calculator_service import CalculatorService
+from talking_telegram_bot.services.search_web_service import SearchWebService
 
 logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str], Awaitable[None]]
@@ -44,10 +36,21 @@ class AutonomousAgentService:
         ollama_client: OllamaClient,
         search_web_service: SearchWebService,
         calculator_service: CalculatorService,
+        request_builder_service: AgentRequestBuilderService | None = None,
+        response_service: AgentResponseService | None = None,
+        tool_service: AgentToolService | None = None,
     ) -> None:
         self._ollama_client = ollama_client
-        self._search_web_service = search_web_service
-        self._calculator_service = calculator_service
+        self._request_builder_service = (
+            request_builder_service
+            or AgentRequestBuilderService(lambda: self._get_current_datetime_iso())
+        )
+        self._response_service = response_service or AgentResponseService()
+        self._tool_service = tool_service or AgentToolService(
+            self._response_service,
+            search_web_service,
+            calculator_service,
+        )
 
     async def run(
         self,
@@ -66,11 +69,11 @@ class AutonomousAgentService:
                     FINAL_CHECK_PROGRESS_MESSAGE,
                 )
             response_text = await self._request_step(messages)
-            payload = self._parse_json_object(response_text)
+            payload = self._response_service.parse_json_object(response_text)
             if payload is None:
                 return response_text
             self._log_thought(step_number, payload)
-            final_answer = self._read_final_answer(payload)
+            final_answer = self._response_service.read_final_answer(payload)
             if final_answer is not None:
                 return final_answer
             messages.append(
@@ -81,7 +84,7 @@ class AutonomousAgentService:
         raise AutonomousAgentError("Agent exceeded the maximum number of steps.")
 
     async def _request_step(self, messages: list[ConversationMessage]) -> str:
-        request_messages = self._build_request_messages(messages)
+        request_messages = self._request_builder_service.build_request_messages(messages)
         try:
             assistant_message = await self._ollama_client.generate_reply(request_messages)
         except OllamaClientError as exc:
@@ -91,143 +94,18 @@ class AutonomousAgentService:
             return response_text
         raise AutonomousAgentError("LLM returned an empty response.")
 
-    def _build_request_messages(
-        self,
-        messages: list[ConversationMessage],
-    ) -> list[ConversationMessage]:
-        current_datetime_message = self._build_current_datetime_message()
-        if not messages:
-            return [current_datetime_message]
-        first_message, *other_messages = messages
-        if first_message.role != "system":
-            return [current_datetime_message, *messages]
-        return [first_message, current_datetime_message, *other_messages]
-
-    def _build_current_datetime_message(self) -> ConversationMessage:
-        return ConversationMessage(
-            role="system",
-            content=(
-                "Текущие локальные дата и время: "
-                f"{self._get_current_datetime_iso()}. "
-                "Используй это как ориентир для дат и времени, когда встречаются "
-                "слова вроде сегодня, завтра, вчера, сейчас, текущий и последний."
-            ),
-        )
-
     def _get_current_datetime_iso(self) -> str:
         return datetime.now().astimezone().isoformat(timespec="seconds")
-
-    def _parse_json_object(self, response_text: str) -> dict[str, Any] | None:
-        try:
-            payload = json.loads(response_text)
-        except ValueError:
-            return None
-        if isinstance(payload, dict):
-            return payload
-        return None
-
-    def _read_final_answer(self, payload: dict[str, Any]) -> str | None:
-        final_answer = payload.get("final_answer")
-        if isinstance(final_answer, str):
-            return final_answer
-        action = payload.get("action")
-        if action == "final_response":
-            response = self._read_final_response_value(payload)
-            if response is not None:
-                return response
-            args = payload.get("args")
-            if not isinstance(args, dict):
-                return None
-            return self._read_final_response_value(args)
-        return None
-
-    def _read_final_response_value(self, payload: dict[str, Any]) -> str | None:
-        for key in ("response", "answer"):
-            value = payload.get(key)
-            if isinstance(value, str):
-                return value
-        return None
 
     async def _build_follow_up(
         self,
         payload: dict[str, Any],
         progress_callback: ProgressCallback | None,
     ) -> str:
-        tool_call = self._read_tool_call(payload)
-        if tool_call is None:
-            return AGENT_CONTINUE_PROMPT
-        if tool_call.action == "search_web":
-            return await self._run_search_web(tool_call, progress_callback)
-        if tool_call.action == "calculator":
-            return self._run_calculator(tool_call)
-        return self._build_error_observation(
-            f"Unknown tool: {tool_call.action}.",
-        )
-
-    async def _run_search_web(
-        self,
-        tool_call: AgentToolCall,
-        progress_callback: ProgressCallback | None,
-    ) -> str:
-        query = tool_call.args.get("query")
-        if not isinstance(query, str):
-            return self._build_error_observation(
-                "Tool search_web requires a string query.",
-            )
-        await self._report_progress(progress_callback, WEB_SEARCH_PROGRESS_MESSAGE)
         try:
-            search_response = await self._search_web_service.search_web(query)
-        except SearchWebServiceError as exc:
-            raise AutonomousAgentError("Web search is unavailable.") from exc
-        await self._report_progress(progress_callback, WEB_RESULTS_PROGRESS_MESSAGE)
-        return self._build_tool_observation(
-            tool_call.action,
-            {
-                "query": search_response.query,
-                "results": [asdict(result) for result in search_response.results],
-            },
-        )
-
-    def _run_calculator(self, tool_call: AgentToolCall) -> str:
-        expression = tool_call.args.get("expression")
-        if not isinstance(expression, str):
-            return self._build_error_observation(
-                "Tool calculator requires a string expression.",
-            )
-        try:
-            calculator_response = self._calculator_service.calculate(expression)
-        except CalculatorServiceError as exc:
-            raise AutonomousAgentError("Calculator is unavailable.") from exc
-        return self._build_tool_observation(
-            tool_call.action,
-            asdict(calculator_response),
-        )
-
-    def _read_tool_call(self, payload: dict[str, Any]) -> AgentToolCall | None:
-        action = payload.get("action")
-        args = payload.get("args")
-        if not isinstance(action, str) or not isinstance(args, dict):
-            return None
-        return AgentToolCall(action=action, args=args)
-
-    def _build_tool_observation(
-        self,
-        tool_name: str,
-        tool_result: dict[str, Any],
-    ) -> str:
-        return json.dumps(
-            {
-                "tool_name": tool_name,
-                "tool_result": tool_result,
-            },
-            ensure_ascii=False,
-        )
-
-    def _build_error_observation(self, error_message: str) -> str:
-        return json.dumps(
-            {"tool_error": error_message},
-            ensure_ascii=False,
-        )
+            return await self._tool_service.build_follow_up(payload, progress_callback)
+        except AgentToolExecutionError as exc:
+            raise AutonomousAgentError(str(exc)) from exc
 
     async def _report_progress(
         self,
