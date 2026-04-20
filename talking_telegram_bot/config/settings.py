@@ -22,6 +22,9 @@ class Settings:
     tavily_api_key: str
     tavily_base_url: str
     tavily_timeout_seconds: float
+    nominatim_base_url: str
+    nominatim_timeout_seconds: float
+    nominatim_user_agent: str
     wttr_base_url: str
     wttr_timeout_seconds: float
     telegram_concurrent_updates: int
@@ -40,6 +43,18 @@ def load_settings() -> Settings:
         tavily_timeout_seconds=_read_positive_float_env_with_default(
             "TAVILY_TIMEOUT_SECONDS",
             default=15.0,
+        ),
+        nominatim_base_url=_read_text_env(
+            "NOMINATIM_BASE_URL",
+            "https://nominatim.openstreetmap.org",
+        ),
+        nominatim_timeout_seconds=_read_positive_float_env_with_default(
+            "NOMINATIM_TIMEOUT_SECONDS",
+            default=10.0,
+        ),
+        nominatim_user_agent=_read_text_env(
+            "NOMINATIM_USER_AGENT",
+            "talking_telegram_bot/1.0",
         ),
         wttr_base_url=_read_text_env("WTTR_BASE_URL", "https://wttr.in"),
         wttr_timeout_seconds=_read_positive_float_env_with_default(

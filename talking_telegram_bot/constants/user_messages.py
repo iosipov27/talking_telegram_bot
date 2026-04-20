@@ -1,5 +1,7 @@
 SAFE_LLM_ERROR_MESSAGE = "LLM is currently unavailable. Please try again later."
 SAFE_MODEL_ERROR_MESSAGE = "Model list is currently unavailable. Please try again later."
+SAFE_WEATHER_ERROR_MESSAGE = "Weather lookup is currently unavailable. Please try again later."
+WEATHER_LOCATION_REQUIRED_MESSAGE = "Please specify the city or place for the weather lookup."
 LLM_THINKING_MESSAGE = "Думаю..."
 WEB_SEARCH_PROGRESS_MESSAGE = "Ищу в вебе..."
 WEB_RESULTS_PROGRESS_MESSAGE = "Нашел результаты, формирую ответ..."

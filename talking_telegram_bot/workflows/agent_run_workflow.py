@@ -55,8 +55,12 @@ class AgentRunWorkflow:
                     envelope.message.user_prompt,
                     envelope,
                 )
+            except AgentExecutionError as exc:
+                logger.warning("Agent workflow failed: %s", exc)
+                await self._publish_error(envelope)
+                return
             except Exception:
-                logger.exception("Failed to run agent workflow.")
+                logger.exception("Unexpected agent workflow failure.")
                 await self._publish_error(envelope)
                 return
         await self._event_bus.publish_and_wait(
@@ -111,7 +115,7 @@ class AgentRunWorkflow:
         tool_call = self._response_service.read_tool_call(payload)
         if tool_call is None:
             return AGENT_CONTINUE_PROMPT
-        if tool_call.action not in {"search_web", "weather", "calculator"}:
+        if tool_call.action not in {"search_web", "calculator"}:
             return self._response_service.build_error_observation(
                 f"Unknown tool: {tool_call.action}.",
             )
@@ -127,7 +131,10 @@ class AgentRunWorkflow:
             chat_id=envelope.chat_id,
             user_id=envelope.user_id,
         )
-        return await response_future
+        try:
+            return await response_future
+        except Exception as exc:
+            raise AgentExecutionError(str(exc)) from exc
 
     def _create_response_future(self):
         return asyncio.get_running_loop().create_future()

@@ -16,6 +16,7 @@ from telegram.ext import (
 from talking_telegram_bot.bus.command_bus import InMemoryCommandBus
 from talking_telegram_bot.bus.dead_letter import DeadLetterWriter
 from talking_telegram_bot.bus.event_bus import InMemoryEventBus
+from talking_telegram_bot.clients.nominatim_client import NominatimClient
 from talking_telegram_bot.clients.ollama_client import OllamaClient
 from talking_telegram_bot.clients.tavily_client import TavilyClient
 from talking_telegram_bot.clients.wttr_client import WttrClient
@@ -59,7 +60,6 @@ from talking_telegram_bot.handlers.search_web_tool_handler import SearchWebToolH
 from talking_telegram_bot.handlers.select_model_handler import SelectModelHandler
 from talking_telegram_bot.handlers.show_role_handler import ShowRoleHandler
 from talking_telegram_bot.handlers.update_role_handler import UpdateRoleHandler
-from talking_telegram_bot.handlers.weather_tool_handler import WeatherToolHandler
 from talking_telegram_bot.logging_utils import MarkdownLogFormatter
 from talking_telegram_bot.messages.commands import (
     ListModels,
@@ -90,12 +90,21 @@ from talking_telegram_bot.services.conversation_lock_service import (
     ConversationLockService,
 )
 from talking_telegram_bot.services.file_processing_service import FileProcessingService
+from talking_telegram_bot.services.location_normalization_service import (
+    LocationNormalizationService,
+)
 from talking_telegram_bot.services.message_input_service import MessageInputService
 from talking_telegram_bot.services.model_runtime_service import ModelRuntimeService
 from talking_telegram_bot.services.search_web_service import SearchWebService
 from talking_telegram_bot.services.prompt_builder_service import PromptBuilderService
 from talking_telegram_bot.services.role_runtime_service import RoleRuntimeService
 from talking_telegram_bot.services.weather_service import WeatherService
+from talking_telegram_bot.services.weather_query_router_service import (
+    WeatherQueryRouterService,
+)
+from talking_telegram_bot.services.weather_reply_formatter_service import (
+    WeatherReplyFormatterService,
+)
 from talking_telegram_bot.workflows.agent_run_workflow import AgentRunWorkflow
 
 
@@ -117,6 +126,11 @@ def main() -> None:
         base_url=settings.tavily_base_url,
         timeout_seconds=settings.tavily_timeout_seconds,
     )
+    nominatim_client = NominatimClient(
+        base_url=settings.nominatim_base_url,
+        timeout_seconds=settings.nominatim_timeout_seconds,
+        user_agent=settings.nominatim_user_agent,
+    )
     wttr_client = WttrClient(
         base_url=settings.wttr_base_url,
         timeout_seconds=settings.wttr_timeout_seconds,
@@ -131,12 +145,15 @@ def main() -> None:
         worker_count=max(4, settings.telegram_concurrent_updates),
     )
     search_web_service = SearchWebService(tavily_client)
-    weather_service = WeatherService(wttr_client)
+    location_normalization_service = LocationNormalizationService(nominatim_client)
+    weather_service = WeatherService(wttr_client, location_normalization_service)
     calculator_service = CalculatorService()
     role_runtime_service = RoleRuntimeService(settings.ollama_agent_role)
     model_runtime_service = ModelRuntimeService(ollama_client)
     message_input_service = MessageInputService()
     prompt_builder_service = PromptBuilderService(role_runtime_service)
+    weather_query_router_service = WeatherQueryRouterService()
+    weather_reply_formatter_service = WeatherReplyFormatterService()
     agent_execution_service = AgentExecutionService(
         ollama_client,
         AgentRequestBuilderService(),
@@ -156,6 +173,9 @@ def main() -> None:
             message_input_service,
             prompt_builder_service,
             event_bus,
+            weather_query_router_service,
+            weather_service,
+            weather_reply_formatter_service,
         ),
     )
     command_bus.register_handler(
@@ -198,10 +218,6 @@ def main() -> None:
     )
     event_bus.subscribe(
         ToolExecutionRequested,
-        WeatherToolHandler(response_service, weather_service, event_bus),
-    )
-    event_bus.subscribe(
-        ToolExecutionRequested,
         CalculatorToolHandler(response_service, calculator_service),
     )
     for event_type in (
@@ -223,6 +239,7 @@ def main() -> None:
         callback_controller,
         ollama_client,
         tavily_client,
+        nominatim_client,
         wttr_client,
         command_bus,
         event_bus,
@@ -238,6 +255,7 @@ def _build_application(
     callback_controller: TelegramCallbackController,
     ollama_client: OllamaClient,
     tavily_client: TavilyClient,
+    nominatim_client: NominatimClient,
     wttr_client: WttrClient,
     command_bus: InMemoryCommandBus,
     event_bus: InMemoryEventBus,
@@ -250,6 +268,7 @@ def _build_application(
         _build_shutdown_callback(
             ollama_client,
             tavily_client,
+            nominatim_client,
             wttr_client,
             command_bus,
             event_bus,
@@ -298,6 +317,7 @@ def _build_startup_callback(
 def _build_shutdown_callback(
     ollama_client: OllamaClient,
     tavily_client: TavilyClient,
+    nominatim_client: NominatimClient,
     wttr_client: WttrClient,
     command_bus: InMemoryCommandBus,
     event_bus: InMemoryEventBus,
@@ -308,6 +328,7 @@ def _build_shutdown_callback(
         await event_bus.stop()
         await ollama_client.close()
         await tavily_client.close()
+        await nominatim_client.close()
         await wttr_client.close()
 
     return shutdown_callback
