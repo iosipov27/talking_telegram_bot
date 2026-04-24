@@ -109,6 +109,11 @@ class AgentRunWorkflow:
             response_text = await self._agent_execution_service.request_step(messages)
             payload = self._response_service.parse_json_object(response_text)
             if payload is None:
+                final_answer = self._response_service.read_final_answer_from_text(
+                    response_text,
+                )
+                if final_answer is not None:
+                    return final_answer
                 return response_text
             self._log_thought(step_number, payload)
             final_answer = self._response_service.read_final_answer(payload)

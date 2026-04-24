@@ -92,6 +92,59 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Проверяю итог...", collector.progress_texts)
         await event_bus.stop()
 
+    async def test_workflow_runs_search_tool_from_json_with_trailing_garbage(
+        self,
+    ) -> None:
+        event_bus = InMemoryEventBus(worker_count=4)
+        response_service = AgentResponseService()
+        agent_execution_service = AsyncMock()
+        agent_execution_service.request_step.side_effect = [
+            (
+                '{"thought":"need web data","action":"search_web",'
+                '"args":{"query":"лучшая рыба для ловли в озерах Румынии апрель 2026"}}}'
+            ),
+            '{"final_answer":"search complete"}',
+        ]
+        search_web_service = AsyncMock()
+        search_web_service.search_web.return_value = SearchWebResponse(
+            query="лучшая рыба для ловли в озерах Румынии апрель 2026",
+            results=[
+                SearchWebResult(
+                    title="Fishing",
+                    url="https://example.com/fishing",
+                    content="Details",
+                ),
+            ],
+        )
+        collector = _EventCollector()
+        event_bus.subscribe(
+            AgentRunRequested,
+            AgentRunWorkflow(
+                agent_execution_service,
+                response_service,
+                event_bus,
+                ConversationLockService(),
+            ),
+        )
+        event_bus.subscribe(
+            ToolExecutionRequested,
+            SearchWebToolHandler(response_service, search_web_service, event_bus),
+        )
+        event_bus.subscribe(ReplyReady, collector)
+
+        await event_bus.publish_and_wait(
+            AgentRunRequested(system_prompt="system", user_prompt="user task"),
+            correlation_id="corr-9",
+            user_id=123,
+        )
+        await asyncio.sleep(0.05)
+
+        search_web_service.search_web.assert_awaited_once_with(
+            "лучшая рыба для ловли в озерах Румынии апрель 2026",
+        )
+        self.assertEqual(collector.replies, ["search complete"])
+        await event_bus.stop()
+
     async def test_workflow_logs_expected_agent_failure_as_warning(self) -> None:
         event_bus = InMemoryEventBus(worker_count=4)
         response_service = AgentResponseService()
@@ -163,5 +216,37 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
                 ConversationMessage(role="assistant", content="old response"),
                 ConversationMessage(role="user", content="new request"),
             ],
+        )
+        await event_bus.stop()
+
+    async def test_workflow_extracts_final_answer_from_malformed_json(self) -> None:
+        event_bus = InMemoryEventBus(worker_count=4)
+        response_service = AgentResponseService()
+        agent_execution_service = AsyncMock()
+        agent_execution_service.request_step.return_value = (
+            '{"final_answer":"Привет!!! Сегодня пятница, 25 апреля 2026 года."})'
+        )
+        collector = _EventCollector()
+        event_bus.subscribe(
+            AgentRunRequested,
+            AgentRunWorkflow(
+                agent_execution_service,
+                response_service,
+                event_bus,
+                ConversationLockService(),
+            ),
+        )
+        event_bus.subscribe(ReplyReady, collector)
+
+        await event_bus.publish_and_wait(
+            AgentRunRequested(system_prompt="system", user_prompt="hello"),
+            correlation_id="corr-8",
+            user_id=123,
+        )
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(
+            collector.replies,
+            ["Привет!!! Сегодня пятница, 25 апреля 2026 года."],
         )
         await event_bus.stop()

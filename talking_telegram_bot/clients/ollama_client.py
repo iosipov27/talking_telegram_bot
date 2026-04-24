@@ -9,7 +9,6 @@ import httpx
 from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.logging_utils import (
     MarkdownTable,
-    build_markdown_code_block,
     format_markdown_event,
 )
 from talking_telegram_bot.models.messages import AssistantMessage, ConversationMessage
@@ -157,13 +156,6 @@ class OllamaClient:
                         (index, message.role, message.content)
                         for index, message in enumerate(messages, start=1)
                     ),
-                ),
-            ],
-            detail_blocks=[
-                build_markdown_code_block(
-                    "Raw Request JSON",
-                    self._format_json(payload),
-                    language="json",
                 ),
             ],
         )
