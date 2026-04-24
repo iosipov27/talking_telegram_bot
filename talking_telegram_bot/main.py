@@ -145,7 +145,6 @@ def main() -> None:
         base_url=settings.wttr_base_url,
         timeout_seconds=settings.wttr_timeout_seconds,
     )
-    chat_history_client = ChatHistoryClient()
     dead_letter_writer = DeadLetterWriter()
     command_bus = InMemoryCommandBus(
         dead_letter_writer=dead_letter_writer,
@@ -171,16 +170,19 @@ def main() -> None:
     )
     response_service = AgentResponseService()
     file_processing_service = FileProcessingService()
-    conversation_context_service = ConversationContextService(chat_history_client)
     conversation_lock_service = ConversationLockService()
-    conversation_summary_service = ConversationSummaryService(
-        conversation_context_service,
-        ollama_client,
-    )
-    history_event_subscriber = HistoryEventSubscriber(
-        conversation_context_service,
-        conversation_summary_service,
-    )
+    conversation_context_service = None
+    history_event_subscriber = None
+    if settings.conversation_history_enabled:
+        conversation_context_service = ConversationContextService(ChatHistoryClient())
+        conversation_summary_service = ConversationSummaryService(
+            conversation_context_service,
+            ollama_client,
+        )
+        history_event_subscriber = HistoryEventSubscriber(
+            conversation_context_service,
+            conversation_summary_service,
+        )
     outbound_controller = TelegramOutboundController()
     text_controller = TelegramTextController(command_bus, event_bus)
     document_controller = TelegramDocumentController(command_bus, event_bus)
@@ -241,8 +243,9 @@ def main() -> None:
         ToolExecutionRequested,
         CalculatorToolHandler(response_service, calculator_service),
     )
-    event_bus.subscribe(MessageReceived, history_event_subscriber)
-    event_bus.subscribe(ResponseGenerated, history_event_subscriber)
+    if history_event_subscriber is not None:
+        event_bus.subscribe(MessageReceived, history_event_subscriber)
+        event_bus.subscribe(ResponseGenerated, history_event_subscriber)
     for event_type in (
         StartTelegramResponseSession,
         ProgressUpdated,

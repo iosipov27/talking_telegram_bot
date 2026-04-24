@@ -28,6 +28,7 @@ class Settings:
     wttr_base_url: str
     wttr_timeout_seconds: float
     telegram_concurrent_updates: int
+    conversation_history_enabled: bool
 
 
 def load_settings() -> Settings:
@@ -64,6 +65,10 @@ def load_settings() -> Settings:
         telegram_concurrent_updates=_read_positive_int_env(
             "TELEGRAM_CONCURRENT_UPDATES",
             default=8,
+        ),
+        conversation_history_enabled=_read_bool_env(
+            "CONVERSATION_HISTORY_ENABLED",
+            default=False,
         ),
     )
 
@@ -115,3 +120,17 @@ def _read_positive_int_env(name: str, default: int) -> int:
     if number > 0:
         return number
     raise SettingsError(f"Environment variable {name} must be greater than 0.")
+
+
+def _read_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    normalized_value = value.strip().lower()
+    if normalized_value in {"1", "true", "yes", "on"}:
+        return True
+    if normalized_value in {"0", "false", "no", "off"}:
+        return False
+    raise SettingsError(
+        f"Environment variable {name} must be true or false.",
+    )

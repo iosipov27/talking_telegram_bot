@@ -34,6 +34,10 @@ The active runtime now has a deterministic weather router in front of the agent 
 - `search_web` for general current information;
 - `calculator` for deterministic math.
 
+Conversation history and summaries are present but disabled by default. Set
+`CONVERSATION_HISTORY_ENABLED=true` to wire `ConversationContextService`,
+`ConversationSummaryService`, and `HistoryEventSubscriber` into the active runtime.
+
 ## Current Request Flows
 
 ### Text Message
@@ -147,8 +151,8 @@ TelegramCallbackController
 | `talking_telegram_bot/services/role_runtime_service.py` | `RoleRuntimeService` | Stores and validates the in-memory runtime role | none |
 | `talking_telegram_bot/services/model_runtime_service.py` | `ModelRuntimeService` | Stores and switches the in-memory active model | `OllamaClient` |
 | `talking_telegram_bot/services/file_processing_service.py` | `FileProcessingService` | Validates file type and size and turns bytes into document prompt text | none |
-| `talking_telegram_bot/services/conversation_context_service.py` | `ConversationContextService` | Reads file-backed chat history and summaries and builds agent context messages | `ChatHistoryClient` |
-| `talking_telegram_bot/services/conversation_summary_service.py` | `ConversationSummaryService` | Updates file-backed conversation summaries after enough complete request and response pairs | `ConversationContextService`, `OllamaClient` |
+| `talking_telegram_bot/services/conversation_context_service.py` | `ConversationContextService` | Optionally reads file-backed chat history and summaries and builds agent context messages | `ChatHistoryClient` |
+| `talking_telegram_bot/services/conversation_summary_service.py` | `ConversationSummaryService` | Optionally updates file-backed conversation summaries after enough complete request and response pairs | `ConversationContextService`, `OllamaClient` |
 | `talking_telegram_bot/services/location_normalization_service.py` | `LocationNormalizationService` | Normalizes user-entered locations, resolves English place names, and produces stable lookup queries for weather requests | `NominatimClient` |
 | `talking_telegram_bot/services/weather_query_router_service.py` | `WeatherQueryRouterService` | Detects weather questions without a date and extracts a location hint for deterministic routing | `re` |
 | `talking_telegram_bot/services/weather_reply_formatter_service.py` | `WeatherReplyFormatterService` | Converts a `WeatherResponse` into a Telegram-facing reply | none |

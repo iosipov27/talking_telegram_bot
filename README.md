@@ -2,18 +2,18 @@
 
 A simple Telegram bot that sends every text message to a local Ollama LLM and replies with the generated answer.
 
-The bot does not use a database. It stores per-user chat history as JSON files in `logs`. Each Telegram message is processed as a separate LLM request with that user's saved history.
+The bot does not use a database. By default, each Telegram message is processed as a separate LLM request without saved message history. Optional per-user chat history can be enabled with `CONVERSATION_HISTORY_ENABLED=true`.
 
 ## What It Does
 
 - Replies to text messages in Telegram.
-- Sends each message and that user's saved history to Ollama through `POST /api/chat`.
+- Sends each message to Ollama through `POST /api/chat`.
 - Uses `stream: false` for LLM responses.
 - Handles LLM and network errors with a safe Telegram reply.
 - Runs in Telegram polling mode.
 - Writes logs to the console and to `logs/bot.log`.
-- Writes a summary and recent request and LLM response pairs to per-user JSON files in `logs`.
-- Summarizes saved history after 5 pairs and sends the summary with new requests.
+- Can write a summary and recent request and LLM response pairs to per-user JSON files in `logs` when `CONVERSATION_HISTORY_ENABLED=true`.
+- Can summarize saved history after 5 pairs and send the summary with new requests.
 - Keeps summary settings in `talking_telegram_bot/constants/summary_settings.py`.
 - Lets the user list and switch local Ollama models with `/models`.
 - Sends a system prompt with each user request so the model keeps the selected role.
@@ -46,6 +46,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3.5:0.8b
 OLLAMA_AGENT_ROLE=autonomous AI agent
 OLLAMA_TIMEOUT_SECONDS=60
+CONVERSATION_HISTORY_ENABLED=false
 ```
 
 The `.env` file is ignored by git. Do not commit real tokens.
@@ -69,6 +70,16 @@ You are autonomous AI agent.
 ```
 
 The default role comes from `OLLAMA_AGENT_ROLE` in `.env`.
+
+## Conversation History
+
+Conversation history is disabled by default. To save per-user request/response pairs, summarize them after 5 pairs, and include that context in later LLM requests, set:
+
+```bash
+CONVERSATION_HISTORY_ENABLED=true
+```
+
+Existing files in `logs/chat_history_<user_id>.json` are left untouched while history is disabled.
 
 ## Select A Model
 
@@ -102,7 +113,7 @@ Logs are written to two places:
 
 - console output while the bot is running;
 - `logs/bot.log` for later error analysis.
-- `logs/chat_history_<user_id>.json` for per-user request and LLM response history, plus the latest summary.
+- `logs/chat_history_<user_id>.json` for optional per-user request and LLM response history, plus the latest summary.
 
 The log directory is ignored by git.
 Console and `logs/bot.log` use markdown-style tables for log entries.
