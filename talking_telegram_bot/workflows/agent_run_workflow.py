@@ -17,6 +17,7 @@ from talking_telegram_bot.messages.events import (
     AgentRunRequested,
     ProgressUpdated,
     ReplyReady,
+    ResponseGenerated,
     ToolExecutionRequested,
     UserFacingErrorRaised,
 )
@@ -26,6 +27,10 @@ from talking_telegram_bot.services.agent_execution_service import (
     AgentExecutionService,
 )
 from talking_telegram_bot.services.agent_response_service import AgentResponseService
+from talking_telegram_bot.services.conversation_context_service import (
+    ConversationContextError,
+    ConversationContextService,
+)
 from talking_telegram_bot.services.conversation_lock_service import ConversationLockService
 
 logger = logging.getLogger(__name__)
@@ -38,11 +43,13 @@ class AgentRunWorkflow:
         response_service: AgentResponseService,
         event_bus: InMemoryEventBus,
         conversation_lock_service: ConversationLockService,
+        conversation_context_service: ConversationContextService | None = None,
     ) -> None:
         self._agent_execution_service = agent_execution_service
         self._response_service = response_service
         self._event_bus = event_bus
         self._conversation_lock_service = conversation_lock_service
+        self._conversation_context_service = conversation_context_service
 
     async def handle(self, envelope: MessageEnvelope[AgentRunRequested]) -> None:
         if envelope.user_id is None:
@@ -64,6 +71,13 @@ class AgentRunWorkflow:
                 await self._publish_error(envelope)
                 return
         await self._event_bus.publish_and_wait(
+            ResponseGenerated(text=reply_text),
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.message_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+        )
+        await self._event_bus.publish_and_wait(
             ReplyReady(text=reply_text),
             correlation_id=envelope.correlation_id,
             causation_id=envelope.message_id,
@@ -77,8 +91,10 @@ class AgentRunWorkflow:
         user_prompt: str,
         envelope: MessageEnvelope[AgentRunRequested],
     ) -> str:
+        context_messages = await self._read_context_messages(envelope)
         messages = [
             ConversationMessage(role="system", content=system_prompt),
+            *context_messages,
             ConversationMessage(role="user", content=user_prompt),
         ]
         for step_number in range(1, AGENT_MAX_STEPS + 1):
@@ -139,7 +155,27 @@ class AgentRunWorkflow:
     def _create_response_future(self):
         return asyncio.get_running_loop().create_future()
 
+    async def _read_context_messages(
+        self,
+        envelope: MessageEnvelope[AgentRunRequested],
+    ) -> list[ConversationMessage]:
+        if self._conversation_context_service is None or envelope.user_id is None:
+            return []
+        try:
+            return await self._conversation_context_service.build_context_messages(
+                envelope.user_id,
+            )
+        except ConversationContextError as exc:
+            raise AgentExecutionError("Conversation context is unavailable.") from exc
+
     async def _publish_error(self, envelope: MessageEnvelope[AgentRunRequested]) -> None:
+        await self._event_bus.publish_and_wait(
+            ResponseGenerated(text=SAFE_LLM_ERROR_MESSAGE),
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.message_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+        )
         await self._event_bus.publish_and_wait(
             UserFacingErrorRaised(text=SAFE_LLM_ERROR_MESSAGE),
             correlation_id=envelope.correlation_id,

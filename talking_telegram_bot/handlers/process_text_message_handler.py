@@ -11,8 +11,10 @@ from talking_telegram_bot.constants.user_messages import (
 from talking_telegram_bot.messages.commands import ProcessTextMessage
 from talking_telegram_bot.messages.events import (
     AgentRunRequested,
+    MessageReceived,
     ProgressUpdated,
     ReplyReady,
+    ResponseGenerated,
     StartTelegramResponseSession,
     TextReplyRequested,
     UserFacingErrorRaised,
@@ -54,6 +56,7 @@ class ProcessTextMessageHandler:
                 envelope.message.raw_text,
             )
         except MessageInputError:
+            await self._publish_response_generated(envelope, SAFE_LLM_ERROR_MESSAGE)
             await self._event_bus.publish_and_wait(
                 TextReplyRequested(
                     message=envelope.message.message,
@@ -65,6 +68,7 @@ class ProcessTextMessageHandler:
                 user_id=envelope.user_id,
             )
             return
+        await self._publish_message_received(envelope, user_prompt)
         weather_route = self._weather_query_router_service.route(user_prompt)
         if weather_route.should_route:
             await self._handle_weather_route(envelope, weather_route.location)
@@ -102,6 +106,10 @@ class ProcessTextMessageHandler:
         location: str | None,
     ) -> None:
         if not location:
+            await self._publish_response_generated(
+                envelope,
+                WEATHER_LOCATION_REQUIRED_MESSAGE,
+            )
             await self._event_bus.publish_and_wait(
                 TextReplyRequested(
                     message=envelope.message.message,
@@ -130,6 +138,7 @@ class ProcessTextMessageHandler:
         try:
             weather_response = await self._weather_service.get_weather(location)
         except WeatherServiceError:
+            await self._publish_response_generated(envelope, SAFE_WEATHER_ERROR_MESSAGE)
             await self._event_bus.publish_and_wait(
                 UserFacingErrorRaised(text=SAFE_WEATHER_ERROR_MESSAGE),
                 correlation_id=envelope.correlation_id,
@@ -138,10 +147,36 @@ class ProcessTextMessageHandler:
                 user_id=envelope.user_id,
             )
             return
+        reply_text = self._weather_reply_formatter_service.format_reply(weather_response)
+        await self._publish_response_generated(envelope, reply_text)
         await self._event_bus.publish_and_wait(
-            ReplyReady(
-                text=self._weather_reply_formatter_service.format_reply(weather_response),
-            ),
+            ReplyReady(text=reply_text),
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.message_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+        )
+
+    async def _publish_message_received(
+        self,
+        envelope: MessageEnvelope[ProcessTextMessage],
+        text: str,
+    ) -> None:
+        await self._event_bus.publish_and_wait(
+            MessageReceived(text=text),
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.message_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+        )
+
+    async def _publish_response_generated(
+        self,
+        envelope: MessageEnvelope[ProcessTextMessage],
+        text: str,
+    ) -> None:
+        await self._event_bus.publish_and_wait(
+            ResponseGenerated(text=text),
             correlation_id=envelope.correlation_id,
             causation_id=envelope.message_id,
             chat_id=envelope.chat_id,

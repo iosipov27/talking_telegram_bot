@@ -11,7 +11,22 @@ class StartTelegramResponseSession:
 
 
 @dataclass(frozen=True, slots=True)
+class UserCreated:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class MessageReceived:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProgressUpdated:
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseGenerated:
     text: str
 
 
@@ -56,4 +71,3 @@ class ToolExecutionRequested:
     action: str
     args: dict[str, Any]
     response_future: asyncio.Future[str] = field(repr=False)
-

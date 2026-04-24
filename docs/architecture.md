@@ -147,7 +147,8 @@ TelegramCallbackController
 | `talking_telegram_bot/services/role_runtime_service.py` | `RoleRuntimeService` | Stores and validates the in-memory runtime role | none |
 | `talking_telegram_bot/services/model_runtime_service.py` | `ModelRuntimeService` | Stores and switches the in-memory active model | `OllamaClient` |
 | `talking_telegram_bot/services/file_processing_service.py` | `FileProcessingService` | Validates file type and size and turns bytes into document prompt text | none |
-| `talking_telegram_bot/services/conversation_context_service.py` | `ConversationContextService` | Wrapper around file-backed chat history and summaries for future conversational context wiring | `ChatHistoryClient` |
+| `talking_telegram_bot/services/conversation_context_service.py` | `ConversationContextService` | Reads file-backed chat history and summaries and builds agent context messages | `ChatHistoryClient` |
+| `talking_telegram_bot/services/conversation_summary_service.py` | `ConversationSummaryService` | Updates file-backed conversation summaries after enough complete request and response pairs | `ConversationContextService`, `OllamaClient` |
 | `talking_telegram_bot/services/location_normalization_service.py` | `LocationNormalizationService` | Normalizes user-entered locations, resolves English place names, and produces stable lookup queries for weather requests | `NominatimClient` |
 | `talking_telegram_bot/services/weather_query_router_service.py` | `WeatherQueryRouterService` | Detects weather questions without a date and extracts a location hint for deterministic routing | `re` |
 | `talking_telegram_bot/services/weather_reply_formatter_service.py` | `WeatherReplyFormatterService` | Converts a `WeatherResponse` into a Telegram-facing reply | none |
@@ -209,5 +210,4 @@ They can be removed in a later cleanup once every remaining caller and test targ
 ## Next Migration Steps
 
 1. Move or rewrite the legacy controller and service tests so they target the new runtime path directly.
-2. Decide whether chat history and summaries should join the active request flow through `ConversationContextService`.
-3. Remove the old synchronous compatibility layer once the new path is the only supported path.
+2. Remove the old synchronous compatibility layer once the new path is the only supported path.

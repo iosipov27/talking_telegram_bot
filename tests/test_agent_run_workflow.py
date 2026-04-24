@@ -14,6 +14,7 @@ from talking_telegram_bot.messages.events import (
 )
 from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
 from talking_telegram_bot.constants.user_messages import SAFE_LLM_ERROR_MESSAGE
+from talking_telegram_bot.models.messages import ConversationMessage
 from talking_telegram_bot.services.agent_response_service import AgentResponseService
 from talking_telegram_bot.services.agent_execution_service import AgentExecutionError
 from talking_telegram_bot.services.conversation_lock_service import (
@@ -123,4 +124,44 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(collector.errors, [SAFE_LLM_ERROR_MESSAGE])
         self.assertIn("Agent workflow failed: LLM is unavailable.", "\n".join(logs.output))
+        await event_bus.stop()
+
+    async def test_workflow_sends_saved_context_to_agent(self) -> None:
+        event_bus = InMemoryEventBus(worker_count=4)
+        response_service = AgentResponseService()
+        agent_execution_service = AsyncMock()
+        agent_execution_service.request_step.return_value = '{"final_answer":"ok"}'
+        conversation_context_service = AsyncMock()
+        conversation_context_service.build_context_messages.return_value = [
+            ConversationMessage(role="system", content="remembered summary"),
+            ConversationMessage(role="user", content="old request"),
+            ConversationMessage(role="assistant", content="old response"),
+        ]
+        event_bus.subscribe(
+            AgentRunRequested,
+            AgentRunWorkflow(
+                agent_execution_service,
+                response_service,
+                event_bus,
+                ConversationLockService(),
+                conversation_context_service,
+            ),
+        )
+
+        await event_bus.publish_and_wait(
+            AgentRunRequested(system_prompt="system", user_prompt="new request"),
+            correlation_id="corr-7",
+            user_id=123,
+        )
+        await asyncio.sleep(0.05)
+
+        agent_execution_service.request_step.assert_awaited_once_with(
+            [
+                ConversationMessage(role="system", content="system"),
+                ConversationMessage(role="system", content="remembered summary"),
+                ConversationMessage(role="user", content="old request"),
+                ConversationMessage(role="assistant", content="old response"),
+                ConversationMessage(role="user", content="new request"),
+            ],
+        )
         await event_bus.stop()

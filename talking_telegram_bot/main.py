@@ -16,6 +16,7 @@ from telegram.ext import (
 from talking_telegram_bot.bus.command_bus import InMemoryCommandBus
 from talking_telegram_bot.bus.dead_letter import DeadLetterWriter
 from talking_telegram_bot.bus.event_bus import InMemoryEventBus
+from talking_telegram_bot.clients.chat_history_client import ChatHistoryClient
 from talking_telegram_bot.clients.nominatim_client import NominatimClient
 from talking_telegram_bot.clients.ollama_client import OllamaClient
 from talking_telegram_bot.clients.tavily_client import TavilyClient
@@ -49,6 +50,7 @@ from talking_telegram_bot.controllers.telegram_text_controller import (
     TelegramTextController,
 )
 from talking_telegram_bot.handlers.calculator_tool_handler import CalculatorToolHandler
+from talking_telegram_bot.handlers.history_event_subscriber import HistoryEventSubscriber
 from talking_telegram_bot.handlers.list_models_handler import ListModelsHandler
 from talking_telegram_bot.handlers.process_document_message_handler import (
     ProcessDocumentMessageHandler,
@@ -72,9 +74,11 @@ from talking_telegram_bot.messages.commands import (
 from talking_telegram_bot.messages.events import (
     AgentRunRequested,
     CallbackTextRequested,
+    MessageReceived,
     ModelListReady,
     ProgressUpdated,
     ReplyReady,
+    ResponseGenerated,
     StartTelegramResponseSession,
     TextReplyRequested,
     ToolExecutionRequested,
@@ -86,8 +90,14 @@ from talking_telegram_bot.services.agent_request_builder_service import (
 )
 from talking_telegram_bot.services.agent_response_service import AgentResponseService
 from talking_telegram_bot.services.calculator_service import CalculatorService
+from talking_telegram_bot.services.conversation_context_service import (
+    ConversationContextService,
+)
 from talking_telegram_bot.services.conversation_lock_service import (
     ConversationLockService,
+)
+from talking_telegram_bot.services.conversation_summary_service import (
+    ConversationSummaryService,
 )
 from talking_telegram_bot.services.file_processing_service import FileProcessingService
 from talking_telegram_bot.services.location_normalization_service import (
@@ -135,6 +145,7 @@ def main() -> None:
         base_url=settings.wttr_base_url,
         timeout_seconds=settings.wttr_timeout_seconds,
     )
+    chat_history_client = ChatHistoryClient()
     dead_letter_writer = DeadLetterWriter()
     command_bus = InMemoryCommandBus(
         dead_letter_writer=dead_letter_writer,
@@ -160,7 +171,16 @@ def main() -> None:
     )
     response_service = AgentResponseService()
     file_processing_service = FileProcessingService()
+    conversation_context_service = ConversationContextService(chat_history_client)
     conversation_lock_service = ConversationLockService()
+    conversation_summary_service = ConversationSummaryService(
+        conversation_context_service,
+        ollama_client,
+    )
+    history_event_subscriber = HistoryEventSubscriber(
+        conversation_context_service,
+        conversation_summary_service,
+    )
     outbound_controller = TelegramOutboundController()
     text_controller = TelegramTextController(command_bus, event_bus)
     document_controller = TelegramDocumentController(command_bus, event_bus)
@@ -210,6 +230,7 @@ def main() -> None:
             response_service,
             event_bus,
             conversation_lock_service,
+            conversation_context_service,
         ),
     )
     event_bus.subscribe(
@@ -220,6 +241,8 @@ def main() -> None:
         ToolExecutionRequested,
         CalculatorToolHandler(response_service, calculator_service),
     )
+    event_bus.subscribe(MessageReceived, history_event_subscriber)
+    event_bus.subscribe(ResponseGenerated, history_event_subscriber)
     for event_type in (
         StartTelegramResponseSession,
         ProgressUpdated,

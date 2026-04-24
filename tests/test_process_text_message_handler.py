@@ -10,8 +10,10 @@ from talking_telegram_bot.handlers.process_text_message_handler import (
 from talking_telegram_bot.messages.commands import ProcessTextMessage
 from talking_telegram_bot.messages.events import (
     AgentRunRequested,
+    MessageReceived,
     ProgressUpdated,
     ReplyReady,
+    ResponseGenerated,
     StartTelegramResponseSession,
     TextReplyRequested,
 )
@@ -80,7 +82,21 @@ class ProcessTextMessageHandlerTestCase(unittest.IsolatedAsyncioTestCase):
 
         weather_service.get_weather.assert_awaited_once_with("Риме")
         event_bus.publish_and_wait.assert_any_await(
+            MessageReceived(text="Какая погода в Риме?"),
+            correlation_id="corr-1",
+            causation_id=envelope.message_id,
+            chat_id=None,
+            user_id=123,
+        )
+        event_bus.publish_and_wait.assert_any_await(
             StartTelegramResponseSession(message=envelope.message.message),
+            correlation_id="corr-1",
+            causation_id=envelope.message_id,
+            chat_id=None,
+            user_id=123,
+        )
+        event_bus.publish_and_wait.assert_any_await(
+            ResponseGenerated(text="weather reply"),
             correlation_id="corr-1",
             causation_id=envelope.message_id,
             chat_id=None,
@@ -116,12 +132,31 @@ class ProcessTextMessageHandlerTestCase(unittest.IsolatedAsyncioTestCase):
 
         await handler.handle(envelope)
 
-        event_bus.publish_and_wait.assert_awaited_once()
-        reply_request = event_bus.publish_and_wait.await_args.args[0]
-        self.assertIsInstance(reply_request, TextReplyRequested)
-        self.assertEqual(
-            reply_request.text,
-            "Please specify the city or place for the weather lookup.",
+        event_bus.publish_and_wait.assert_any_await(
+            MessageReceived(text="Какая погода?"),
+            correlation_id="corr-2",
+            causation_id=envelope.message_id,
+            chat_id=None,
+            user_id=123,
+        )
+        event_bus.publish_and_wait.assert_any_await(
+            ResponseGenerated(
+                text="Please specify the city or place for the weather lookup.",
+            ),
+            correlation_id="corr-2",
+            causation_id=envelope.message_id,
+            chat_id=None,
+            user_id=123,
+        )
+        event_bus.publish_and_wait.assert_any_await(
+            TextReplyRequested(
+                message=envelope.message.message,
+                text="Please specify the city or place for the weather lookup.",
+            ),
+            correlation_id="corr-2",
+            causation_id=envelope.message_id,
+            chat_id=None,
+            user_id=123,
         )
 
     async def test_does_not_route_weather_query_with_date(self) -> None:
@@ -150,13 +185,26 @@ class ProcessTextMessageHandlerTestCase(unittest.IsolatedAsyncioTestCase):
 
         weather_service.get_weather.assert_not_called()
         event_bus.publish_and_wait.assert_any_await(
+            MessageReceived(text="Какая погода будет в Риме 30 апреля?"),
+            correlation_id="corr-3",
+            causation_id=envelope.message_id,
+            chat_id=None,
+            user_id=123,
+        )
+        event_bus.publish_and_wait.assert_any_await(
             StartTelegramResponseSession(message=envelope.message.message),
             correlation_id="corr-3",
             causation_id=envelope.message_id,
             chat_id=None,
             user_id=123,
         )
-        agent_request = event_bus.publish_and_wait.await_args_list[1].args[0]
-        self.assertIsInstance(agent_request, AgentRunRequested)
-        self.assertEqual(agent_request.user_prompt, "Какая погода будет в Риме 30 апреля?")
-
+        event_bus.publish_and_wait.assert_any_await(
+            AgentRunRequested(
+                system_prompt="system",
+                user_prompt="Какая погода будет в Риме 30 апреля?",
+            ),
+            correlation_id="corr-3",
+            causation_id=envelope.message_id,
+            chat_id=None,
+            user_id=123,
+        )

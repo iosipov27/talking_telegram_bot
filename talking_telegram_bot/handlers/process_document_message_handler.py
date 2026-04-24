@@ -11,6 +11,8 @@ from talking_telegram_bot.constants.user_messages import (
 from talking_telegram_bot.messages.commands import ProcessDocumentMessage
 from talking_telegram_bot.messages.events import (
     AgentRunRequested,
+    MessageReceived,
+    ResponseGenerated,
     StartTelegramResponseSession,
     TextReplyRequested,
     UserFacingErrorRaised,
@@ -60,6 +62,13 @@ class ProcessDocumentMessageHandler:
             await self._reply_directly(envelope, FILE_READ_ERROR_MESSAGE)
             return
         await self._event_bus.publish_and_wait(
+            MessageReceived(text=prompt_text),
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.message_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+        )
+        await self._event_bus.publish_and_wait(
             StartTelegramResponseSession(message=envelope.message.message),
             correlation_id=envelope.correlation_id,
             causation_id=envelope.message_id,
@@ -79,6 +88,13 @@ class ProcessDocumentMessageHandler:
             )
         except Exception:
             await self._event_bus.publish_and_wait(
+                ResponseGenerated(text=SAFE_LLM_ERROR_MESSAGE),
+                correlation_id=envelope.correlation_id,
+                causation_id=envelope.message_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+            )
+            await self._event_bus.publish_and_wait(
                 UserFacingErrorRaised(text=SAFE_LLM_ERROR_MESSAGE),
                 correlation_id=envelope.correlation_id,
                 causation_id=envelope.message_id,
@@ -92,6 +108,13 @@ class ProcessDocumentMessageHandler:
         text: str,
     ) -> None:
         await self._event_bus.publish_and_wait(
+            ResponseGenerated(text=text),
+            correlation_id=envelope.correlation_id,
+            causation_id=envelope.message_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+        )
+        await self._event_bus.publish_and_wait(
             TextReplyRequested(
                 message=envelope.message.message,
                 text=text,
@@ -101,4 +124,3 @@ class ProcessDocumentMessageHandler:
             chat_id=envelope.chat_id,
             user_id=envelope.user_id,
         )
-
