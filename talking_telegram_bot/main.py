@@ -25,7 +25,6 @@ from talking_telegram_bot.config.settings import Settings, SettingsError, load_s
 from talking_telegram_bot.constants.log_events import SETTINGS_LOAD_FAILED
 from talking_telegram_bot.constants.logging_settings import (
     LOG_BACKUP_COUNT,
-    LOG_DATE_FORMAT,
     LOG_FILE_PATH,
     LOG_MAX_BYTES,
 )
@@ -62,7 +61,7 @@ from talking_telegram_bot.handlers.search_web_tool_handler import SearchWebToolH
 from talking_telegram_bot.handlers.select_model_handler import SelectModelHandler
 from talking_telegram_bot.handlers.show_role_handler import ShowRoleHandler
 from talking_telegram_bot.handlers.update_role_handler import UpdateRoleHandler
-from talking_telegram_bot.logging_utils import MarkdownLogFormatter
+from talking_telegram_bot.logging_utils import JsonLogFormatter, log_event
 from talking_telegram_bot.messages.commands import (
     ListModels,
     ProcessDocumentMessage,
@@ -123,7 +122,12 @@ def main() -> None:
     try:
         settings = load_settings()
     except SettingsError:
-        logging.exception(SETTINGS_LOAD_FAILED)
+        log_event(
+            logging.getLogger(__name__),
+            logging.ERROR,
+            SETTINGS_LOAD_FAILED,
+            exc_info=True,
+        )
         raise
 
     ollama_client = OllamaClient(
@@ -363,23 +367,14 @@ def _build_shutdown_callback(
 def _configure_logging(log_file_path: Path = LOG_FILE_PATH) -> None:
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(
-        MarkdownLogFormatter(
-            use_colors=True,
-            datefmt=LOG_DATE_FORMAT,
-        ),
-    )
+    console_handler.setFormatter(JsonLogFormatter())
     file_handler = RotatingFileHandler(
         log_file_path,
         maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT,
         encoding="utf-8",
     )
-    file_handler.setFormatter(
-        MarkdownLogFormatter(
-            datefmt=LOG_DATE_FORMAT,
-        ),
-    )
+    file_handler.setFormatter(JsonLogFormatter())
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
     root_logger.setLevel(logging.INFO)

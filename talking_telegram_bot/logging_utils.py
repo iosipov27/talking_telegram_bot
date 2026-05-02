@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import json
 import logging
 import re
 import shutil
 import textwrap
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from datetime import datetime, timezone
+from types import TracebackType
+from typing import Any, Iterable, Iterator, Sequence, TypeAlias
 
 DEFAULT_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 RESET_COLOR = "\033[0m"
@@ -25,12 +30,208 @@ TABLE_VALUE_COLOR = "\033[38;5;255m"
 TEXT_COLOR = "\033[38;5;252m"
 CODE_COLOR = "\033[38;5;151m"
 SECTION_TITLE_COLOR = "\033[1;38;5;117m"
+DEFAULT_TRACE_ID = "system"
+_trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "trace_id",
+    default=None,
+)
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "request_id",
+    default=None,
+)
+_chat_id_var: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "chat_id",
+    default=None,
+)
+_user_id_var: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "user_id",
+    default=None,
+)
+_envelope_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "envelope_id",
+    default=None,
+)
+_causation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "causation_id",
+    default=None,
+)
+_JSON_BASE_FIELDS = frozenset(
+    {
+        "timestamp",
+        "level",
+        "message",
+        "service",
+        "trace_id",
+        "request_id",
+    },
+)
+ExcInfo: TypeAlias = (
+    bool
+    | BaseException
+    | tuple[type[BaseException], BaseException, TracebackType | None]
+    | None
+)
 
 
 @dataclass(frozen=True)
 class MarkdownTable:
     headers: tuple[str, ...]
     rows: tuple[tuple[object, ...], ...]
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        trace_id = getattr(record, "trace_id", None) or get_current_trace_id()
+        request_id = getattr(record, "request_id", None) or get_current_request_id()
+        if request_id is None:
+            request_id = trace_id or DEFAULT_TRACE_ID
+        payload = {
+            "timestamp": datetime.fromtimestamp(
+                record.created,
+                timezone.utc,
+            ).isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "service": getattr(record, "service_name", record.name),
+            "trace_id": trace_id or DEFAULT_TRACE_ID,
+            "request_id": request_id,
+        }
+        self._add_context_field(payload, "chat_id", getattr(record, "chat_id", None))
+        self._add_context_field(payload, "user_id", getattr(record, "user_id", None))
+        self._add_context_field(
+            payload,
+            "envelope_id",
+            getattr(record, "envelope_id", None),
+        )
+        self._add_context_field(
+            payload,
+            "causation_id",
+            getattr(record, "causation_id", None),
+        )
+        structured_fields = getattr(record, "structured_fields", None)
+        if isinstance(structured_fields, dict):
+            for key, value in structured_fields.items():
+                if key not in _JSON_BASE_FIELDS:
+                    payload[key] = _to_json_safe(value)
+        if record.exc_info:
+            exception_type, exception, traceback = record.exc_info
+            if exception_type is not None:
+                payload["exception_type"] = exception_type.__name__
+            if exception is not None:
+                payload["exception_message"] = str(exception)
+            if traceback is not None:
+                payload["exception_traceback"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    def _add_context_field(
+        self,
+        payload: dict[str, object],
+        key: str,
+        value: object | None,
+    ) -> None:
+        if value is None:
+            value = get_current_log_context_value(key)
+        if value is not None:
+            payload[key] = _to_json_safe(value)
+
+
+def log_event(
+    logger: logging.Logger,
+    level: int,
+    message: str,
+    *,
+    trace_id: str | None = None,
+    request_id: str | None = None,
+    service: str | None = None,
+    chat_id: int | None = None,
+    user_id: int | None = None,
+    envelope_id: str | None = None,
+    causation_id: str | None = None,
+    exc_info: ExcInfo = None,
+    **fields: Any,
+) -> None:
+    logger.log(
+        level,
+        message,
+        extra={
+            "trace_id": trace_id or get_current_trace_id() or DEFAULT_TRACE_ID,
+            "request_id": request_id or get_current_request_id(),
+            "service_name": service or logger.name,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "envelope_id": envelope_id,
+            "causation_id": causation_id,
+            "structured_fields": fields,
+        },
+        exc_info=exc_info,
+    )
+
+
+def get_current_trace_id() -> str | None:
+    return _trace_id_var.get()
+
+
+def get_current_request_id() -> str | None:
+    return _request_id_var.get()
+
+
+def get_current_log_context_value(key: str) -> object | None:
+    context_vars: dict[str, contextvars.ContextVar[object | None]] = {
+        "chat_id": _chat_id_var,
+        "user_id": _user_id_var,
+        "envelope_id": _envelope_id_var,
+        "causation_id": _causation_id_var,
+    }
+    context_var = context_vars.get(key)
+    if context_var is None:
+        return None
+    return context_var.get()
+
+
+@contextlib.contextmanager
+def logging_context(
+    *,
+    trace_id: str,
+    request_id: str | None = None,
+    chat_id: int | None = None,
+    user_id: int | None = None,
+    envelope_id: str | None = None,
+    causation_id: str | None = None,
+) -> Iterator[None]:
+    token = _trace_id_var.set(trace_id)
+    request_token = _request_id_var.set(request_id or trace_id)
+    chat_token = _chat_id_var.set(chat_id)
+    user_token = _user_id_var.set(user_id)
+    envelope_token = _envelope_id_var.set(envelope_id)
+    causation_token = _causation_id_var.set(causation_id)
+    try:
+        yield
+    finally:
+        _causation_id_var.reset(causation_token)
+        _envelope_id_var.reset(envelope_token)
+        _user_id_var.reset(user_token)
+        _chat_id_var.reset(chat_token)
+        _request_id_var.reset(request_token)
+        _trace_id_var.reset(token)
+
+
+@contextlib.contextmanager
+def logging_trace_context(trace_id: str) -> Iterator[None]:
+    with logging_context(trace_id=trace_id):
+        yield
+
+
+def _to_json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _to_json_safe(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_to_json_safe(item) for item in value]
+    return str(value)
 
 
 class MarkdownLogFormatter(logging.Formatter):

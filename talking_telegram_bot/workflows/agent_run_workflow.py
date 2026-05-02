@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
 
 from talking_telegram_bot.bus.envelope import MessageEnvelope
 from talking_telegram_bot.bus.event_bus import InMemoryEventBus
@@ -12,7 +11,7 @@ from talking_telegram_bot.constants.user_messages import (
     FINAL_CHECK_PROGRESS_MESSAGE,
     SAFE_LLM_ERROR_MESSAGE,
 )
-from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.messages.events import (
     AgentRunRequested,
     ProgressUpdated,
@@ -63,11 +62,27 @@ class AgentRunWorkflow:
                     envelope,
                 )
             except AgentExecutionError as exc:
-                logger.warning("Agent workflow failed: %s", exc)
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "Agent workflow failed.",
+                    trace_id=envelope.correlation_id,
+                    chat_id=envelope.chat_id,
+                    user_id=envelope.user_id,
+                    error=str(exc),
+                )
                 await self._publish_error(envelope)
                 return
             except Exception:
-                logger.exception("Unexpected agent workflow failure.")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "Unexpected agent workflow failure.",
+                    trace_id=envelope.correlation_id,
+                    chat_id=envelope.chat_id,
+                    user_id=envelope.user_id,
+                    exc_info=True,
+                )
                 await self._publish_error(envelope)
                 return
         await self._event_bus.publish_and_wait(
@@ -92,6 +107,15 @@ class AgentRunWorkflow:
         envelope: MessageEnvelope[AgentRunRequested],
     ) -> str:
         context_messages = await self._read_context_messages(envelope)
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.AGENT_RUN_REQUESTED,
+            trace_id=envelope.correlation_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+            context_message_count=len(context_messages),
+        )
         messages = [
             ConversationMessage(role="system", content=system_prompt),
             *context_messages,
@@ -137,9 +161,28 @@ class AgentRunWorkflow:
         if tool_call is None:
             return AGENT_CONTINUE_PROMPT
         if tool_call.action not in {"search_web", "calculator"}:
+            log_event(
+                logger,
+                logging.WARNING,
+                log_events.AGENT_TOOL_FAILED,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                tool_action=tool_call.action,
+                reason="unknown_tool",
+            )
             return self._response_service.build_error_observation(
                 f"Unknown tool: {tool_call.action}.",
             )
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.AGENT_TOOL_REQUESTED,
+            trace_id=envelope.correlation_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+            tool_action=tool_call.action,
+        )
         response_future = self._create_response_future()
         await self._event_bus.publish(
             ToolExecutionRequested(
@@ -194,19 +237,11 @@ class AgentRunWorkflow:
         if not isinstance(thought, str) or not thought.strip():
             return
         action = payload.get("action")
-        logger.info(
-            format_markdown_event(
-                log_events.AGENT_THOUGHT_RECEIVED,
-                [
-                    ("Step", step_number),
-                    ("Action", action if isinstance(action, str) else "-"),
-                    ("Logged At", datetime.now().astimezone().isoformat(timespec="seconds")),
-                ],
-                detail_tables=[
-                    MarkdownTable(
-                        headers=("Type", "Content"),
-                        rows=(("thought", thought),),
-                    ),
-                ],
-            ),
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.AGENT_THOUGHT_RECEIVED,
+            step=step_number,
+            tool_action=action if isinstance(action, str) else None,
+            thought_length=len(thought),
         )

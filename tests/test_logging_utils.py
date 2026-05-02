@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import io
+import json
 import logging
 import unittest
 
 from talking_telegram_bot.logging_utils import (
+    JsonLogFormatter,
     MarkdownLogFormatter,
     MarkdownTable,
     build_markdown_code_block,
     format_markdown_event,
+    logging_context,
+    logging_trace_context,
+    log_event,
 )
 
 
@@ -93,3 +99,99 @@ class LoggingUtilsTestCase(unittest.TestCase):
         self.assertIn("│", formatted)
         self.assertIn("assistant", formatted)
         self.assertNotIn("| Field | Value |", formatted)
+
+    def test_json_log_formatter_includes_required_fields(self) -> None:
+        payload = self._capture_json_log(
+            lambda logger: log_event(
+                logger,
+                logging.INFO,
+                "Example event",
+                trace_id="trace-1",
+                service="test-service",
+                answer_count=2,
+            ),
+        )
+
+        self.assertEqual(payload["level"], "INFO")
+        self.assertEqual(payload["message"], "Example event")
+        self.assertEqual(payload["service"], "test-service")
+        self.assertEqual(payload["trace_id"], "trace-1")
+        self.assertEqual(payload["request_id"], "trace-1")
+        self.assertEqual(payload["answer_count"], 2)
+        self.assertIn("timestamp", payload)
+
+    def test_json_log_formatter_serializes_exceptions(self) -> None:
+        def write_error(logger: logging.Logger) -> None:
+            try:
+                raise RuntimeError("boom")
+            except RuntimeError:
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "Failure",
+                    trace_id="trace-2",
+                    exc_info=True,
+                )
+
+        payload = self._capture_json_log(write_error)
+
+        self.assertEqual(payload["level"], "ERROR")
+        self.assertEqual(payload["exception_type"], "RuntimeError")
+        self.assertEqual(payload["exception_message"], "boom")
+        self.assertIn("RuntimeError: boom", payload["exception_traceback"])
+
+    def test_log_event_uses_trace_context(self) -> None:
+        with logging_trace_context("trace-3"):
+            payload = self._capture_json_log(
+                lambda logger: log_event(logger, logging.DEBUG, "Context event"),
+            )
+
+        self.assertEqual(payload["trace_id"], "trace-3")
+        self.assertEqual(payload["request_id"], "trace-3")
+
+    def test_log_event_uses_request_context(self) -> None:
+        with logging_context(
+            trace_id="trace-4",
+            request_id="request-4",
+            chat_id=10,
+            user_id=20,
+            envelope_id="message-4",
+            causation_id="parent-4",
+        ):
+            payload = self._capture_json_log(
+                lambda logger: log_event(logger, logging.INFO, "Context event"),
+            )
+
+        self.assertEqual(payload["trace_id"], "trace-4")
+        self.assertEqual(payload["request_id"], "request-4")
+        self.assertEqual(payload["chat_id"], 10)
+        self.assertEqual(payload["user_id"], 20)
+        self.assertEqual(payload["envelope_id"], "message-4")
+        self.assertEqual(payload["causation_id"], "parent-4")
+
+    def test_log_event_defaults_to_system_trace(self) -> None:
+        payload = self._capture_json_log(
+            lambda logger: log_event(logger, logging.INFO, "Startup event"),
+        )
+
+        self.assertEqual(payload["trace_id"], "system")
+        self.assertEqual(payload["request_id"], "system")
+
+    def _capture_json_log(self, writer) -> dict[str, object]:
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(JsonLogFormatter())
+        logger = logging.getLogger(f"{__name__}.{self._testMethodName}")
+        old_level = logger.level
+        old_propagate = logger.propagate
+        logger.handlers.clear()
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        try:
+            writer(logger)
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(old_level)
+            logger.propagate = old_propagate
+        return json.loads(stream.getvalue())

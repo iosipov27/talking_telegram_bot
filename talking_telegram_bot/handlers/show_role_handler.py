@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from talking_telegram_bot.bus.envelope import MessageEnvelope
 from talking_telegram_bot.bus.event_bus import InMemoryEventBus
+from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.user_messages import ROLE_MESSAGE
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.messages.commands import ShowRole
 from talking_telegram_bot.messages.events import TextReplyRequested
 from talking_telegram_bot.services.role_runtime_service import RoleRuntimeService
+
+logger = logging.getLogger(__name__)
 
 
 class ShowRoleHandler:
@@ -18,11 +24,22 @@ class ShowRoleHandler:
         self._event_bus = event_bus
 
     async def handle(self, envelope: MessageEnvelope[ShowRole]) -> None:
+        current_role = self._role_runtime_service.get_current_agent_role()
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.ROLE_COMMAND_RECEIVED,
+            trace_id=envelope.correlation_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+            action="show_role",
+            role_length=len(current_role),
+        )
         await self._event_bus.publish_and_wait(
             TextReplyRequested(
                 message=envelope.message.message,
                 text=ROLE_MESSAGE.format(
-                    agent_role=self._role_runtime_service.get_current_agent_role(),
+                    agent_role=current_role,
                 ),
             ),
             correlation_id=envelope.correlation_id,
@@ -30,4 +47,3 @@ class ShowRoleHandler:
             chat_id=envelope.chat_id,
             user_id=envelope.user_id,
         )
-

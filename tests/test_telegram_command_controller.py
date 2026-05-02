@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 from talking_telegram_bot.controllers.telegram_command_controller import (
     TelegramCommandController,
@@ -25,6 +25,7 @@ class TelegramCommandControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         command_bus.execute.assert_awaited_once_with(
             ListModels(message=message),
+            correlation_id=ANY,
             chat_id=10,
             user_id=20,
         )
@@ -44,6 +45,7 @@ class TelegramCommandControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         command_bus.execute.assert_awaited_once_with(
             ShowRole(message=message),
+            correlation_id=ANY,
             chat_id=10,
             user_id=20,
         )
@@ -63,6 +65,7 @@ class TelegramCommandControllerTestCase(unittest.IsolatedAsyncioTestCase):
 
         command_bus.execute.assert_awaited_once_with(
             UpdateRole(message=message, raw_role="system analyst"),
+            correlation_id=ANY,
             chat_id=10,
             user_id=20,
         )

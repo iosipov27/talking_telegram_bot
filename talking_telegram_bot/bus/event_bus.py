@@ -8,6 +8,7 @@ from uuid import uuid4
 from talking_telegram_bot.bus.dead_letter import DeadLetterWriter
 from talking_telegram_bot.bus.envelope import MessageEnvelope
 from talking_telegram_bot.bus.registry import HandlerRegistry
+from talking_telegram_bot.logging_utils import logging_context
 
 _SENTINEL = object()
 
@@ -136,12 +137,22 @@ class InMemoryEventBus:
                 self._queue.task_done()
                 return
             try:
-                subscribers = self._registry.get_event_subscribers(queued_item.envelope.message)
-                for subscriber in subscribers:
-                    try:
-                        await subscriber.handle(queued_item.envelope)
-                    except Exception as exc:
-                        await self._dead_letter_writer.write(queued_item.envelope, exc)
+                with logging_context(
+                    trace_id=queued_item.envelope.correlation_id,
+                    request_id=queued_item.envelope.correlation_id,
+                    chat_id=queued_item.envelope.chat_id,
+                    user_id=queued_item.envelope.user_id,
+                    envelope_id=queued_item.envelope.message_id,
+                    causation_id=queued_item.envelope.causation_id,
+                ):
+                    subscribers = self._registry.get_event_subscribers(
+                        queued_item.envelope.message,
+                    )
+                    for subscriber in subscribers:
+                        try:
+                            await subscriber.handle(queued_item.envelope)
+                        except Exception as exc:
+                            await self._dead_letter_writer.write(queued_item.envelope, exc)
             finally:
                 if queued_item.future is not None and not queued_item.future.done():
                     queued_item.future.set_result(None)

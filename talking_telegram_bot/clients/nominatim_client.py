@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
+from talking_telegram_bot.constants import log_events
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.models.location import NormalizedLocation
+
+logger = logging.getLogger(__name__)
 
 
 class NominatimClientError(RuntimeError):
@@ -30,6 +35,14 @@ class NominatimClient:
 
     async def normalize_location(self, query: str) -> NormalizedLocation | None:
         url = f"{self._base_url}/search"
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.NOMINATIM_REQUEST_SENT,
+            method="GET",
+            endpoint="/search",
+            query_length=len(query),
+        )
         try:
             response = await self._http_client.get(
                 url,
@@ -43,12 +56,23 @@ class NominatimClient:
             )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
+            self._log_request_failed("timeout")
             raise NominatimTimeoutError("Nominatim request timed out.") from exc
         except httpx.HTTPStatusError as exc:
+            self._log_request_failed("http_status", status_code=exc.response.status_code)
             raise NominatimClientError("Nominatim returned an unsuccessful status.") from exc
         except httpx.HTTPError as exc:
+            self._log_request_failed("http_error")
             raise NominatimClientError("Nominatim request failed.") from exc
-        return self._extract_location(self._read_json(response))
+        location = self._extract_location(self._read_json(response))
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.NOMINATIM_RESPONSE_RECEIVED,
+            status_code=response.status_code,
+            found=location is not None,
+        )
+        return location
 
     async def close(self) -> None:
         if self._owns_http_client:
@@ -88,3 +112,15 @@ class NominatimClient:
         if isinstance(value, str) and value.strip():
             return value.strip()
         raise NominatimClientError(f"Nominatim returned an invalid {field_name} payload.")
+
+    def _log_request_failed(self, reason: str, status_code: int | None = None) -> None:
+        fields: dict[str, object] = {"reason": reason}
+        if status_code is not None:
+            fields["status_code"] = status_code
+        log_event(
+            logger,
+            logging.ERROR,
+            log_events.NOMINATIM_REQUEST_FAILED,
+            **fields,
+            exc_info=True,
+        )

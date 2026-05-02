@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
 
+from talking_telegram_bot.constants import log_events
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.models.weather import WeatherForecastDay, WeatherResponse
+
+logger = logging.getLogger(__name__)
 
 
 class WttrClientError(RuntimeError):
@@ -30,6 +35,14 @@ class WttrClient:
     async def get_weather(self, location: str) -> WeatherResponse:
         encoded_location = quote_plus(location)
         url = f"{self._base_url}/{encoded_location}"
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.WTTR_REQUEST_SENT,
+            method="GET",
+            endpoint="/{location}",
+            location_length=len(location),
+        )
         try:
             response = await self._http_client.get(
                 url,
@@ -37,12 +50,23 @@ class WttrClient:
             )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
+            self._log_request_failed("timeout")
             raise WttrTimeoutError("wttr.in request timed out.") from exc
         except httpx.HTTPStatusError as exc:
+            self._log_request_failed("http_status", status_code=exc.response.status_code)
             raise WttrClientError("wttr.in returned an unsuccessful status.") from exc
         except httpx.HTTPError as exc:
+            self._log_request_failed("http_error")
             raise WttrClientError("wttr.in request failed.") from exc
-        return self._extract_response(self._read_json(response), location)
+        weather_response = self._extract_response(self._read_json(response), location)
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.WTTR_RESPONSE_RECEIVED,
+            status_code=response.status_code,
+            forecast_day_count=len(weather_response.forecast),
+        )
+        return weather_response
 
     async def close(self) -> None:
         if self._owns_http_client:
@@ -159,3 +183,14 @@ class WttrClient:
             return value.strip()
         raise WttrClientError(f"wttr.in returned an invalid {field_name} payload.")
 
+    def _log_request_failed(self, reason: str, status_code: int | None = None) -> None:
+        fields: dict[str, object] = {"reason": reason}
+        if status_code is not None:
+            fields["status_code"] = status_code
+        log_event(
+            logger,
+            logging.ERROR,
+            log_events.WTTR_REQUEST_FAILED,
+            **fields,
+            exc_info=True,
+        )

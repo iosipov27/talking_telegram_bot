@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 from talking_telegram_bot.bus.envelope import MessageEnvelope
 from talking_telegram_bot.bus.event_bus import InMemoryEventBus
+from talking_telegram_bot.constants import log_events
 from talking_telegram_bot.constants.user_messages import (
     SAFE_LLM_ERROR_MESSAGE,
     SAFE_WEATHER_ERROR_MESSAGE,
@@ -19,6 +22,7 @@ from talking_telegram_bot.messages.events import (
     TextReplyRequested,
     UserFacingErrorRaised,
 )
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.services.message_input_service import (
     MessageInputError,
     MessageInputService,
@@ -31,6 +35,8 @@ from talking_telegram_bot.services.weather_reply_formatter_service import (
     WeatherReplyFormatterService,
 )
 from talking_telegram_bot.services.weather_service import WeatherService, WeatherServiceError
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessTextMessageHandler:
@@ -56,6 +62,15 @@ class ProcessTextMessageHandler:
                 envelope.message.raw_text,
             )
         except MessageInputError:
+            log_event(
+                logger,
+                logging.WARNING,
+                log_events.TEXT_MESSAGE_PROCESSING_ERROR,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                reason="empty_text",
+            )
             await self._publish_response_generated(envelope, SAFE_LLM_ERROR_MESSAGE)
             await self._event_bus.publish_and_wait(
                 TextReplyRequested(
@@ -68,11 +83,37 @@ class ProcessTextMessageHandler:
                 user_id=envelope.user_id,
             )
             return
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.TEXT_MESSAGE_NORMALIZED,
+            trace_id=envelope.correlation_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+            text_length=len(user_prompt),
+        )
         await self._publish_message_received(envelope, user_prompt)
         weather_route = self._weather_query_router_service.route(user_prompt)
         if weather_route.should_route:
+            log_event(
+                logger,
+                logging.INFO,
+                log_events.WEATHER_ROUTE_SELECTED,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                has_location=bool(weather_route.location),
+            )
             await self._handle_weather_route(envelope, weather_route.location)
             return
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.AGENT_ROUTE_SELECTED,
+            trace_id=envelope.correlation_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+        )
         await self._event_bus.publish_and_wait(
             StartTelegramResponseSession(message=envelope.message.message),
             correlation_id=envelope.correlation_id,
@@ -81,6 +122,15 @@ class ProcessTextMessageHandler:
             user_id=envelope.user_id,
         )
         try:
+            log_event(
+                logger,
+                logging.INFO,
+                log_events.AGENT_RUN_REQUESTED,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                source="text",
+            )
             await self._event_bus.publish_and_wait(
                 AgentRunRequested(
                     system_prompt=self._prompt_builder_service.build_system_prompt(),
@@ -92,6 +142,16 @@ class ProcessTextMessageHandler:
                 user_id=envelope.user_id,
             )
         except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.TEXT_MESSAGE_PROCESSING_ERROR,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                reason="agent_request_failed",
+                exc_info=True,
+            )
             await self._event_bus.publish_and_wait(
                 UserFacingErrorRaised(text=SAFE_LLM_ERROR_MESSAGE),
                 correlation_id=envelope.correlation_id,
@@ -106,6 +166,15 @@ class ProcessTextMessageHandler:
         location: str | None,
     ) -> None:
         if not location:
+            log_event(
+                logger,
+                logging.INFO,
+                log_events.WEATHER_ROUTE_REJECTED,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                reason="missing_location",
+            )
             await self._publish_response_generated(
                 envelope,
                 WEATHER_LOCATION_REQUIRED_MESSAGE,
@@ -138,6 +207,16 @@ class ProcessTextMessageHandler:
         try:
             weather_response = await self._weather_service.get_weather(location)
         except WeatherServiceError:
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.WEATHER_ROUTE_REJECTED,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                reason="lookup_failed",
+                exc_info=True,
+            )
             await self._publish_response_generated(envelope, SAFE_WEATHER_ERROR_MESSAGE)
             await self._event_bus.publish_and_wait(
                 UserFacingErrorRaised(text=SAFE_WEATHER_ERROR_MESSAGE),

@@ -176,7 +176,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
 
         self.assertEqual(collector.errors, [SAFE_LLM_ERROR_MESSAGE])
-        self.assertIn("Agent workflow failed: LLM is unavailable.", "\n".join(logs.output))
+        self.assertIn("Agent workflow failed.", "\n".join(logs.output))
         await event_bus.stop()
 
     async def test_workflow_sends_saved_context_to_agent(self) -> None:

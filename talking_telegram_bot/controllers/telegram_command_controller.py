@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from talking_telegram_bot.bus.command_bus import InMemoryCommandBus
 from talking_telegram_bot.constants import log_events
-from talking_telegram_bot.logging_utils import format_markdown_event
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.messages.commands import ListModels, ShowRole, UpdateRole
 
 logger = logging.getLogger(__name__)
@@ -26,17 +27,18 @@ class TelegramCommandController:
         message = update.effective_message
         if message is None:
             return
-        logger.info(
-            format_markdown_event(
-                log_events.MODELS_COMMAND_RECEIVED,
-                [
-                    ("Chat ID", self._get_chat_id(update)),
-                    ("User ID", self._get_user_id(update)),
-                ],
-            ),
+        correlation_id = str(uuid4())
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.MODELS_COMMAND_RECEIVED,
+            trace_id=correlation_id,
+            chat_id=self._get_chat_id(update),
+            user_id=self._get_user_id(update),
         )
         await self._command_bus.execute(
             ListModels(message=message),
+            correlation_id=correlation_id,
             chat_id=self._get_chat_id(update),
             user_id=self._get_user_id(update),
         )
@@ -50,15 +52,15 @@ class TelegramCommandController:
         if message is None:
             return
         requested_role = self._read_command_argument(context)
-        logger.info(
-            format_markdown_event(
-                log_events.ROLE_COMMAND_RECEIVED,
-                [
-                    ("Chat ID", self._get_chat_id(update)),
-                    ("User ID", self._get_user_id(update)),
-                    ("Requested Role", requested_role or "(not provided)"),
-                ],
-            ),
+        correlation_id = str(uuid4())
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.ROLE_COMMAND_RECEIVED,
+            trace_id=correlation_id,
+            chat_id=self._get_chat_id(update),
+            user_id=self._get_user_id(update),
+            has_requested_role=bool(requested_role),
         )
         command = (
             UpdateRole(message=message, raw_role=requested_role)
@@ -67,6 +69,7 @@ class TelegramCommandController:
         )
         await self._command_bus.execute(
             command,
+            correlation_id=correlation_id,
             chat_id=self._get_chat_id(update),
             user_id=self._get_user_id(update),
         )

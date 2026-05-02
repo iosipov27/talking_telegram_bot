@@ -14,7 +14,7 @@ from talking_telegram_bot.constants.user_messages import (
     LLM_THINKING_MESSAGE,
     MODEL_LIST_MESSAGE,
 )
-from talking_telegram_bot.logging_utils import MarkdownTable, format_markdown_event
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.messages.events import (
     CallbackTextRequested,
     ModelListReady,
@@ -55,10 +55,14 @@ class TelegramOutboundController:
             await self._handle_user_facing_error(envelope)
             return
         if isinstance(message, TextReplyRequested):
-            await self._send_reply(message.message, message.text)
+            await self._send_reply(message.message, message.text, envelope.correlation_id)
             return
         if isinstance(message, CallbackTextRequested):
-            await self._edit_callback_text(message.callback_query, message.text)
+            await self._edit_callback_text(
+                message.callback_query,
+                message.text,
+                envelope.correlation_id,
+            )
             return
         if isinstance(message, ModelListReady):
             await self._handle_model_list_ready(envelope)
@@ -77,7 +81,13 @@ class TelegramOutboundController:
                 LLM_THINKING_MESSAGE,
             )
         except Exception:
-            logger.exception(log_events.TELEGRAM_THINKING_MESSAGE_SEND_FAILED)
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.TELEGRAM_THINKING_MESSAGE_SEND_FAILED,
+                trace_id=envelope.correlation_id,
+                exc_info=True,
+            )
 
     async def _handle_progress_updated(
         self,
@@ -91,7 +101,13 @@ class TelegramOutboundController:
         try:
             await session.progress_message.edit_text(envelope.message.text)
         except Exception:
-            logger.exception(log_events.TELEGRAM_THINKING_MESSAGE_EDIT_FAILED)
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.TELEGRAM_THINKING_MESSAGE_EDIT_FAILED,
+                trace_id=envelope.correlation_id,
+                exc_info=True,
+            )
             return
         session.current_text = envelope.message.text
 
@@ -102,8 +118,15 @@ class TelegramOutboundController:
         session = self._sessions.pop(envelope.correlation_id, None)
         if session is None:
             return
-        await self._stop_progress_message(session.progress_message)
-        await self._send_reply(session.message, envelope.message.text)
+        await self._stop_progress_message(
+            session.progress_message,
+            envelope.correlation_id,
+        )
+        await self._send_reply(
+            session.message,
+            envelope.message.text,
+            envelope.correlation_id,
+        )
         self._log_processing_finished(
             correlation_id=envelope.correlation_id,
             reply_text=envelope.message.text,
@@ -116,11 +139,22 @@ class TelegramOutboundController:
     ) -> None:
         session = self._sessions.pop(envelope.correlation_id, None)
         if session is not None:
-            await self._stop_progress_message(session.progress_message)
-            await self._send_reply(session.message, envelope.message.text)
+            await self._stop_progress_message(
+                session.progress_message,
+                envelope.correlation_id,
+            )
+            await self._send_reply(
+                session.message,
+                envelope.message.text,
+                envelope.correlation_id,
+            )
             return
         if envelope.message.fallback_message is not None:
-            await self._send_reply(envelope.message.fallback_message, envelope.message.text)
+            await self._send_reply(
+                envelope.message.fallback_message,
+                envelope.message.text,
+                envelope.correlation_id,
+            )
 
     async def _handle_model_list_ready(
         self,
@@ -133,59 +167,59 @@ class TelegramOutboundController:
                 envelope.message.model_names,
             ),
         )
-        logger.info(
-            format_markdown_event(
-                log_events.MODEL_LIST_SENT,
-                [
-                    ("Current Model", envelope.message.current_model),
-                    ("Model Count", len(envelope.message.model_names)),
-                ],
-                detail_tables=[
-                    MarkdownTable(
-                        headers=("#", "Model"),
-                        rows=tuple(
-                            (index, model_name)
-                            for index, model_name in enumerate(
-                                envelope.message.model_names,
-                                start=1,
-                            )
-                        ),
-                    ),
-                ],
-            ),
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.MODEL_LIST_SENT,
+            trace_id=envelope.correlation_id,
+            current_model=envelope.message.current_model,
+            model_count=len(envelope.message.model_names),
         )
 
-    async def _send_reply(self, message, text: str) -> None:
+    async def _send_reply(self, message, text: str, trace_id: str) -> None:
         try:
             await message.reply_text(text)
-            logger.info(
-                format_markdown_event(
-                    log_events.TELEGRAM_REPLY_SENT,
-                    [("Text Length", len(text))],
-                    detail_tables=[
-                        MarkdownTable(
-                            headers=("Role", "Content"),
-                            rows=(("assistant", text),),
-                        ),
-                    ],
-                ),
+            log_event(
+                logger,
+                logging.INFO,
+                log_events.TELEGRAM_REPLY_SENT,
+                trace_id=trace_id,
+                text_length=len(text),
             )
         except Exception:
-            logger.exception(log_events.TELEGRAM_REPLY_SEND_FAILED)
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.TELEGRAM_REPLY_SEND_FAILED,
+                trace_id=trace_id,
+                exc_info=True,
+            )
 
-    async def _edit_callback_text(self, query, text: str) -> None:
+    async def _edit_callback_text(self, query, text: str, trace_id: str) -> None:
         try:
             await query.edit_message_text(text)
         except Exception:
-            logger.exception(log_events.TELEGRAM_REPLY_SEND_FAILED)
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.TELEGRAM_REPLY_SEND_FAILED,
+                trace_id=trace_id,
+                exc_info=True,
+            )
 
-    async def _stop_progress_message(self, progress_message) -> None:
+    async def _stop_progress_message(self, progress_message, trace_id: str) -> None:
         if progress_message is None:
             return
         try:
             await progress_message.delete()
         except Exception:
-            logger.exception(log_events.TELEGRAM_THINKING_MESSAGE_DELETE_FAILED)
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.TELEGRAM_THINKING_MESSAGE_DELETE_FAILED,
+                trace_id=trace_id,
+                exc_info=True,
+            )
 
     def _build_model_keyboard(
         self,
@@ -220,13 +254,11 @@ class TelegramOutboundController:
         reply_text: str,
         started_at: float,
     ) -> None:
-        logger.info(
-            format_markdown_event(
-                log_events.TEXT_MESSAGE_PROCESSED,
-                [
-                    ("Correlation ID", correlation_id),
-                    ("Reply Length", len(reply_text)),
-                    ("Elapsed Seconds", f"{monotonic() - started_at:.3f}"),
-                ],
-            ),
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.TEXT_MESSAGE_PROCESSED,
+            trace_id=correlation_id,
+            reply_length=len(reply_text),
+            elapsed_seconds=f"{monotonic() - started_at:.3f}",
         )

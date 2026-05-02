@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from talking_telegram_bot.bus.envelope import MessageEnvelope
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.messages.events import MessageReceived, ResponseGenerated
 from talking_telegram_bot.models.messages import ChatHistoryEntry
 from talking_telegram_bot.services.conversation_context_service import (
@@ -57,7 +58,14 @@ class HistoryEventSubscriber:
                 envelope.user_id,
             )
         except ConversationSummaryError as exc:
-            logger.warning("Conversation summary update failed: %s", exc)
+            log_event(
+                logger,
+                logging.WARNING,
+                "Conversation summary update failed.",
+                trace_id=envelope.correlation_id,
+                user_id=envelope.user_id,
+                error=str(exc),
+            )
 
     def _build_key(
         self,

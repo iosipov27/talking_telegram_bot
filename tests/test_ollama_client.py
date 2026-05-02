@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from json import loads as json_loads
 from json import loads
 
 import httpx
 
 from talking_telegram_bot.clients.ollama_client import OllamaClient, OllamaClientError
 from talking_telegram_bot.constants import log_events
+from talking_telegram_bot.logging_utils import JsonLogFormatter
 from talking_telegram_bot.models.messages import ConversationMessage
 
 
@@ -63,16 +65,18 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
                 ],
             )
 
-        log_output = "\n".join(logs.output)
-        self.assertIn(log_events.OLLAMA_REQUEST_SENT, log_output)
-        self.assertIn("| Method | POST |", log_output)
-        self.assertIn("| URL | http://ollama.local/api/chat |", log_output)
-        self.assertIn("| # | Role | Content |", log_output)
-        self.assertIn("be concise", log_output)
-        self.assertNotIn("#### Raw Request JSON", log_output)
-        self.assertIn(log_events.OLLAMA_RESPONSE_RECEIVED, log_output)
-        self.assertIn("| Model | test-model |", log_output)
-        self.assertIn("| Content Length | 6 |", log_output)
+        payloads = self._format_json_records(logs.records)
+        self.assertEqual(payloads[0]["message"], log_events.OLLAMA_REQUEST_SENT)
+        self.assertEqual(payloads[0]["method"], "POST")
+        self.assertEqual(payloads[0]["endpoint"], "/api/chat")
+        self.assertEqual(payloads[0]["model"], "test-model")
+        self.assertEqual(payloads[0]["message_count"], 2)
+        self.assertNotIn("url", payloads[0])
+        self.assertNotIn("messages", payloads[0])
+        self.assertEqual(payloads[1]["message"], log_events.OLLAMA_RESPONSE_RECEIVED)
+        self.assertEqual(payloads[1]["model"], "test-model")
+        self.assertEqual(payloads[1]["content_length"], 6)
+        self.assertNotIn("content", payloads[1])
         await http_client.aclose()
 
     async def test_generate_reply_uses_switched_model(self) -> None:
@@ -187,13 +191,17 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
         ) as logs:
             await client.list_model_names()
 
-        log_output = "\n".join(logs.output)
-        self.assertIn(log_events.OLLAMA_MODEL_LIST_REQUEST_SENT, log_output)
-        self.assertIn("| Method | GET |", log_output)
-        self.assertIn("| URL | http://ollama.local/api/tags |", log_output)
-        self.assertIn(log_events.OLLAMA_MODEL_LIST_RESPONSE_RECEIVED, log_output)
-        self.assertIn("| # | Model |", log_output)
-        self.assertIn("model-a", log_output)
+        payloads = self._format_json_records(logs.records)
+        self.assertEqual(payloads[0]["message"], log_events.OLLAMA_MODEL_LIST_REQUEST_SENT)
+        self.assertEqual(payloads[0]["method"], "GET")
+        self.assertEqual(payloads[0]["endpoint"], "/api/tags")
+        self.assertNotIn("url", payloads[0])
+        self.assertEqual(
+            payloads[1]["message"],
+            log_events.OLLAMA_MODEL_LIST_RESPONSE_RECEIVED,
+        )
+        self.assertEqual(payloads[1]["model_count"], 1)
+        self.assertNotIn("model_names", payloads[1])
         await http_client.aclose()
 
     async def test_generate_reply_raises_for_invalid_payload(self) -> None:
@@ -215,3 +223,7 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
             )
 
         await http_client.aclose()
+
+    def _format_json_records(self, records) -> list[dict[str, object]]:
+        formatter = JsonLogFormatter()
+        return [json_loads(formatter.format(record)) for record in records]

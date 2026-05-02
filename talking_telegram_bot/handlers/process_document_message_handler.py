@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from talking_telegram_bot.bus.envelope import MessageEnvelope
 from talking_telegram_bot.bus.event_bus import InMemoryEventBus
+from talking_telegram_bot.constants import log_events
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.constants.user_messages import (
     FILE_READ_ERROR_MESSAGE,
     FILE_TOO_LARGE_MESSAGE,
@@ -24,6 +28,8 @@ from talking_telegram_bot.services.file_processing_service import (
     UnsupportedFileTypeError,
 )
 from talking_telegram_bot.services.prompt_builder_service import PromptBuilderService
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessDocumentMessageHandler:
@@ -48,9 +54,11 @@ class ProcessDocumentMessageHandler:
                 envelope.message.content,
             )
         except UnsupportedFileTypeError:
+            self._log_document_rejected(envelope, "unsupported_file_type")
             await self._reply_directly(envelope, UNSUPPORTED_FILE_MESSAGE)
             return
         except FileTooLargeError:
+            self._log_document_rejected(envelope, "file_too_large")
             await self._reply_directly(
                 envelope,
                 FILE_TOO_LARGE_MESSAGE.format(
@@ -59,8 +67,20 @@ class ProcessDocumentMessageHandler:
             )
             return
         except FileProcessingError:
+            self._log_document_rejected(envelope, "file_processing_failed")
             await self._reply_directly(envelope, FILE_READ_ERROR_MESSAGE)
             return
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.DOCUMENT_PROMPT_BUILT,
+            trace_id=envelope.correlation_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+            file_name=envelope.message.file_name or "(missing)",
+            file_size=envelope.message.file_size or 0,
+            prompt_length=len(prompt_text),
+        )
         await self._event_bus.publish_and_wait(
             MessageReceived(text=prompt_text),
             correlation_id=envelope.correlation_id,
@@ -76,6 +96,15 @@ class ProcessDocumentMessageHandler:
             user_id=envelope.user_id,
         )
         try:
+            log_event(
+                logger,
+                logging.INFO,
+                log_events.AGENT_RUN_REQUESTED,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                source="document",
+            )
             await self._event_bus.publish_and_wait(
                 AgentRunRequested(
                     system_prompt=self._prompt_builder_service.build_system_prompt(),
@@ -87,6 +116,16 @@ class ProcessDocumentMessageHandler:
                 user_id=envelope.user_id,
             )
         except Exception:
+            log_event(
+                logger,
+                logging.ERROR,
+                log_events.DOCUMENT_MESSAGE_PROCESSING_ERROR,
+                trace_id=envelope.correlation_id,
+                chat_id=envelope.chat_id,
+                user_id=envelope.user_id,
+                stage="agent_request",
+                exc_info=True,
+            )
             await self._event_bus.publish_and_wait(
                 ResponseGenerated(text=SAFE_LLM_ERROR_MESSAGE),
                 correlation_id=envelope.correlation_id,
@@ -101,6 +140,23 @@ class ProcessDocumentMessageHandler:
                 chat_id=envelope.chat_id,
                 user_id=envelope.user_id,
             )
+
+    def _log_document_rejected(
+        self,
+        envelope: MessageEnvelope[ProcessDocumentMessage],
+        reason: str,
+    ) -> None:
+        log_event(
+            logger,
+            logging.WARNING,
+            log_events.DOCUMENT_REJECTED,
+            trace_id=envelope.correlation_id,
+            chat_id=envelope.chat_id,
+            user_id=envelope.user_id,
+            file_name=envelope.message.file_name or "(missing)",
+            file_size=envelope.message.file_size or 0,
+            reason=reason,
+        )
 
     async def _reply_directly(
         self,

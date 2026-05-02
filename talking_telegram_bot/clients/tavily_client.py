@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
+from talking_telegram_bot.constants import log_events
+from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
+
+logger = logging.getLogger(__name__)
 
 
 class TavilyClientError(RuntimeError):
@@ -30,6 +35,15 @@ class TavilyClient:
 
     async def search(self, query: str, max_results: int) -> SearchWebResponse:
         url = f"{self._base_url}/search"
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.TAVILY_REQUEST_SENT,
+            method="POST",
+            endpoint="/search",
+            query_length=len(query),
+            max_results=max_results,
+        )
         try:
             response = await self._http_client.post(
                 url,
@@ -38,12 +52,23 @@ class TavilyClient:
             )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
+            self._log_request_failed("timeout")
             raise TavilyTimeoutError("Tavily request timed out.") from exc
         except httpx.HTTPStatusError as exc:
+            self._log_request_failed("http_status", status_code=exc.response.status_code)
             raise TavilyClientError("Tavily returned an unsuccessful status.") from exc
         except httpx.HTTPError as exc:
+            self._log_request_failed("http_error")
             raise TavilyClientError("Tavily request failed.") from exc
-        return self._extract_response(self._read_json(response))
+        search_response = self._extract_response(self._read_json(response))
+        log_event(
+            logger,
+            logging.INFO,
+            log_events.TAVILY_RESPONSE_RECEIVED,
+            status_code=response.status_code,
+            result_count=len(search_response.results),
+        )
+        return search_response
 
     async def close(self) -> None:
         if self._owns_http_client:
@@ -92,3 +117,14 @@ class TavilyClient:
             content=content,
         )
 
+    def _log_request_failed(self, reason: str, status_code: int | None = None) -> None:
+        fields: dict[str, object] = {"reason": reason}
+        if status_code is not None:
+            fields["status_code"] = status_code
+        log_event(
+            logger,
+            logging.ERROR,
+            log_events.TAVILY_REQUEST_FAILED,
+            **fields,
+            exc_info=True,
+        )
