@@ -29,6 +29,8 @@ class Settings:
     wttr_timeout_seconds: float
     telegram_concurrent_updates: int
     conversation_history_enabled: bool
+    sentry_dsn: str | None
+    sentry_environment: str
 
 
 def load_settings() -> Settings:
@@ -70,6 +72,8 @@ def load_settings() -> Settings:
             "CONVERSATION_HISTORY_ENABLED",
             default=False,
         ),
+        sentry_dsn=_read_optional_text_env("SENTRY_DSN"),
+        sentry_environment=_read_text_env("SENTRY_ENVIRONMENT", "development"),
     )
 
 
@@ -85,6 +89,13 @@ def _read_text_env(name: str, default: str) -> str:
     if value:
         return value
     return default
+
+
+def _read_optional_text_env(name: str) -> str | None:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    return None
 
 
 def _read_positive_float_env(name: str) -> float:

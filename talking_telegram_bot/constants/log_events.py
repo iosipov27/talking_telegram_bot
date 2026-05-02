@@ -1,4 +1,6 @@
 SETTINGS_LOAD_FAILED = "Failed to load application settings."
+SENTRY_CONFIGURED = "Sentry Configured"
+SENTRY_CONFIGURATION_FAILED = "Failed to configure Sentry."
 
 TEXT_MESSAGE_RECEIVED = "Telegram Text Message"
 TEXT_MESSAGE_PROCESSING_FAILED = "Failed to process message: %s"

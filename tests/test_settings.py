@@ -13,6 +13,8 @@ class SettingsTestCase(unittest.TestCase):
             settings = load_settings()
 
         self.assertFalse(settings.conversation_history_enabled)
+        self.assertIsNone(settings.sentry_dsn)
+        self.assertEqual(settings.sentry_environment, "development")
 
     def test_load_settings_enables_conversation_history_from_env(self) -> None:
         env = self._build_required_env()
@@ -28,6 +30,19 @@ class SettingsTestCase(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaises(SettingsError):
                 load_settings()
+
+    def test_load_settings_reads_sentry_settings(self) -> None:
+        env = self._build_required_env()
+        env["SENTRY_DSN"] = "https://public@example.ingest.sentry.io/1"
+        env["SENTRY_ENVIRONMENT"] = "production"
+        with patch.dict(os.environ, env, clear=True):
+            settings = load_settings()
+
+        self.assertEqual(
+            settings.sentry_dsn,
+            "https://public@example.ingest.sentry.io/1",
+        )
+        self.assertEqual(settings.sentry_environment, "production")
 
     def _build_required_env(self) -> dict[str, str]:
         return {

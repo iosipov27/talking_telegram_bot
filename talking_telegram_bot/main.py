@@ -22,7 +22,11 @@ from talking_telegram_bot.clients.ollama_client import OllamaClient
 from talking_telegram_bot.clients.tavily_client import TavilyClient
 from talking_telegram_bot.clients.wttr_client import WttrClient
 from talking_telegram_bot.config.settings import Settings, SettingsError, load_settings
-from talking_telegram_bot.constants.log_events import SETTINGS_LOAD_FAILED
+from talking_telegram_bot.constants.log_events import (
+    SENTRY_CONFIGURED,
+    SENTRY_CONFIGURATION_FAILED,
+    SETTINGS_LOAD_FAILED,
+)
 from talking_telegram_bot.constants.logging_settings import (
     LOG_BACKUP_COUNT,
     LOG_FILE_PATH,
@@ -114,7 +118,13 @@ from talking_telegram_bot.services.weather_query_router_service import (
 from talking_telegram_bot.services.weather_reply_formatter_service import (
     WeatherReplyFormatterService,
 )
+from talking_telegram_bot.sentry_utils import (
+    SentryConfigurationError,
+    configure_sentry,
+)
 from talking_telegram_bot.workflows.agent_run_workflow import AgentRunWorkflow
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -123,12 +133,32 @@ def main() -> None:
         settings = load_settings()
     except SettingsError:
         log_event(
-            logging.getLogger(__name__),
+            logger,
             logging.ERROR,
             SETTINGS_LOAD_FAILED,
             exc_info=True,
         )
         raise
+    try:
+        sentry_enabled = configure_sentry(
+            dsn=settings.sentry_dsn,
+            environment=settings.sentry_environment,
+        )
+    except SentryConfigurationError:
+        log_event(
+            logger,
+            logging.ERROR,
+            SENTRY_CONFIGURATION_FAILED,
+            exc_info=True,
+        )
+        raise
+    if sentry_enabled:
+        log_event(
+            logger,
+            logging.INFO,
+            SENTRY_CONFIGURED,
+            environment=settings.sentry_environment,
+        )
 
     ollama_client = OllamaClient(
         base_url=settings.ollama_base_url,
