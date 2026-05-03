@@ -99,3 +99,40 @@ class SentryUtilsTestCase(unittest.TestCase):
                 "answer_count": 2,
             },
         )
+
+    def test_before_send_redacts_telegram_bot_token_urls(self) -> None:
+        event = _add_request_context(
+            {
+                "breadcrumbs": {
+                    "values": [
+                        {
+                            "category": "httplib",
+                            "data": {
+                                "url": "https://api.telegram.org/bot123456:secret-token/getUpdates",
+                            },
+                        },
+                    ],
+                },
+                "extra": {
+                    "structured_fields": {
+                        "url": "https://api.telegram.org/bot123456:secret-token/sendMessage",
+                    },
+                },
+            },
+            {},
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(
+            event["breadcrumbs"]["values"][0]["data"]["url"],
+            "https://api.telegram.org/bot[Filtered]/getUpdates",
+        )
+        self.assertEqual(
+            event["extra"]["structured_fields"]["url"],
+            "https://api.telegram.org/bot[Filtered]/sendMessage",
+        )
+        self.assertEqual(
+            event["extra"]["json_log"]["url"],
+            "https://api.telegram.org/bot[Filtered]/sendMessage",
+        )

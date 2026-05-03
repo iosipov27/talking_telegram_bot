@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from talking_telegram_bot.logging_utils import (
@@ -19,6 +20,10 @@ except ImportError:  # pragma: no cover - exercised when optional dependency is 
 
 
 SENTRY_CONTEXT_NAME = "telegram_bot_request"
+TELEGRAM_BOT_TOKEN_PATTERN = re.compile(
+    r"((?:https?://)?api\.telegram\.org/bot)[^/\s]+",
+)
+TELEGRAM_BOT_TOKEN_REPLACEMENT = r"\1[Filtered]"
 _is_configured = False
 
 
@@ -87,6 +92,7 @@ def _add_request_context(
     _add_json_log_extra(event)
     context = _read_event_context(event)
     if context["trace_id"] == DEFAULT_TRACE_ID and context["request_id"] == DEFAULT_TRACE_ID:
+        _sanitize_event(event)
         return event
     tags = event.setdefault("tags", {})
     tags["trace_id"] = context["trace_id"]
@@ -97,6 +103,7 @@ def _add_request_context(
     user_id = context.get("user_id")
     if user_id is not None:
         event["user"] = {"id": str(user_id)}
+    _sanitize_event(event)
     return event
 
 
@@ -229,3 +236,25 @@ def _to_json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_to_json_safe(item) for item in value]
     return str(value)
+
+
+def _sanitize_event(event: dict[str, Any]) -> None:
+    sanitized = _sanitize_sentry_value(event)
+    if isinstance(sanitized, dict):
+        event.clear()
+        event.update(sanitized)
+
+
+def _sanitize_sentry_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return TELEGRAM_BOT_TOKEN_PATTERN.sub(TELEGRAM_BOT_TOKEN_REPLACEMENT, value)
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_sentry_value(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_sentry_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_sentry_value(item) for item in value)
+    return value
