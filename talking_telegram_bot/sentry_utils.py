@@ -84,6 +84,7 @@ def _add_request_context(
     hint: dict[str, Any],
 ) -> dict[str, Any] | None:
     del hint
+    _add_json_log_extra(event)
     context = _read_event_context(event)
     if context["trace_id"] == DEFAULT_TRACE_ID and context["request_id"] == DEFAULT_TRACE_ID:
         return event
@@ -97,6 +98,65 @@ def _add_request_context(
     if user_id is not None:
         event["user"] = {"id": str(user_id)}
     return event
+
+
+def _add_json_log_extra(event: dict[str, Any]) -> None:
+    payload = _build_json_log_payload(event)
+    if payload is None:
+        return
+    extra = event.get("extra")
+    if not isinstance(extra, dict):
+        extra = {}
+        event["extra"] = extra
+    extra["json_log"] = payload
+
+
+def _build_json_log_payload(event: dict[str, Any]) -> dict[str, Any] | None:
+    message = _read_log_message(event)
+    logger_name = _read_text(event.get("logger"))
+    extra = event.get("extra")
+    if not isinstance(extra, dict):
+        extra = {}
+    if message is None and logger_name is None and not extra:
+        return None
+    context = _read_event_context(event)
+    payload: dict[str, Any] = {
+        "level": _read_text(event.get("level")) or "error",
+        "message": message or "",
+        "service": _read_text(extra.get("service_name")) or logger_name or "sentry",
+        "trace_id": context["trace_id"],
+        "request_id": context["request_id"],
+    }
+    timestamp = _read_text(event.get("timestamp"))
+    if timestamp is not None:
+        payload["timestamp"] = timestamp
+    for key in ("chat_id", "user_id", "envelope_id", "causation_id"):
+        value = context.get(key)
+        if value is not None:
+            payload[key] = _to_json_safe(value)
+    structured_fields = extra.get("structured_fields")
+    if isinstance(structured_fields, dict):
+        for key, value in structured_fields.items():
+            if key not in {
+                "timestamp",
+                "level",
+                "message",
+                "service",
+                "trace_id",
+                "request_id",
+            }:
+                payload[key] = _to_json_safe(value)
+    return payload
+
+
+def _read_log_message(event: dict[str, Any]) -> str | None:
+    logentry = event.get("logentry")
+    if not isinstance(logentry, dict):
+        return _read_text(event.get("message"))
+    formatted = _read_text(logentry.get("formatted"))
+    if formatted is not None:
+        return formatted
+    return _read_text(logentry.get("message"))
 
 
 def _read_event_context(event: dict[str, Any]) -> dict[str, Any]:
@@ -156,3 +216,16 @@ def _read_text(value: object) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _to_json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _to_json_safe(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_to_json_safe(item) for item in value]
+    return str(value)

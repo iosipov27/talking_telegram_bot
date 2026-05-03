@@ -100,6 +100,30 @@ class LoggingUtilsTestCase(unittest.TestCase):
         self.assertIn("assistant", formatted)
         self.assertNotIn("| Field | Value |", formatted)
 
+    def test_markdown_log_formatter_renders_structured_log_event(self) -> None:
+        formatter = MarkdownLogFormatter(use_colors=False)
+        record = logging.LogRecord(
+            name="talking_telegram_bot.tests",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="Example event",
+            args=(),
+            exc_info=None,
+        )
+        record.trace_id = "trace-1"
+        record.request_id = "request-1"
+        record.chat_id = 10
+        record.user_id = 20
+        record.structured_fields = {"answer_count": 2}
+
+        formatted = formatter.format(record)
+
+        self.assertIn("### Example event", formatted)
+        self.assertIn("| Trace ID | trace-1 |", formatted)
+        self.assertIn("| Chat ID | 10 |", formatted)
+        self.assertIn("| Answer Count | 2 |", formatted)
+
     def test_json_log_formatter_includes_required_fields(self) -> None:
         payload = self._capture_json_log(
             lambda logger: log_event(

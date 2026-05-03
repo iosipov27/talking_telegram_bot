@@ -64,3 +64,38 @@ class SentryUtilsTestCase(unittest.TestCase):
         self.assertEqual(event["user"], {"id": "40"})
         self.assertEqual(event["contexts"][SENTRY_CONTEXT_NAME]["chat_id"], 30)
 
+    def test_before_send_adds_structured_json_log_extra(self) -> None:
+        event = _add_request_context(
+            {
+                "level": "error",
+                "logger": "talking_telegram_bot.tests",
+                "timestamp": "2026-05-03T10:00:00Z",
+                "logentry": {"formatted": "Example event"},
+                "extra": {
+                    "trace_id": "trace-3",
+                    "request_id": "request-3",
+                    "chat_id": 50,
+                    "user_id": 60,
+                    "service_name": "test-service",
+                    "structured_fields": {"answer_count": 2},
+                },
+            },
+            {},
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(
+            event["extra"]["json_log"],
+            {
+                "level": "error",
+                "message": "Example event",
+                "service": "test-service",
+                "trace_id": "trace-3",
+                "request_id": "request-3",
+                "timestamp": "2026-05-03T10:00:00Z",
+                "chat_id": 50,
+                "user_id": 60,
+                "answer_count": 2,
+            },
+        )

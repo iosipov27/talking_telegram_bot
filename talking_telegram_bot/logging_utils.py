@@ -81,38 +81,7 @@ class MarkdownTable:
 
 class JsonLogFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        trace_id = getattr(record, "trace_id", None) or get_current_trace_id()
-        request_id = getattr(record, "request_id", None) or get_current_request_id()
-        if request_id is None:
-            request_id = trace_id or DEFAULT_TRACE_ID
-        payload = {
-            "timestamp": datetime.fromtimestamp(
-                record.created,
-                timezone.utc,
-            ).isoformat(timespec="milliseconds"),
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "service": getattr(record, "service_name", record.name),
-            "trace_id": trace_id or DEFAULT_TRACE_ID,
-            "request_id": request_id,
-        }
-        self._add_context_field(payload, "chat_id", getattr(record, "chat_id", None))
-        self._add_context_field(payload, "user_id", getattr(record, "user_id", None))
-        self._add_context_field(
-            payload,
-            "envelope_id",
-            getattr(record, "envelope_id", None),
-        )
-        self._add_context_field(
-            payload,
-            "causation_id",
-            getattr(record, "causation_id", None),
-        )
-        structured_fields = getattr(record, "structured_fields", None)
-        if isinstance(structured_fields, dict):
-            for key, value in structured_fields.items():
-                if key not in _JSON_BASE_FIELDS:
-                    payload[key] = _to_json_safe(value)
+        payload = build_json_log_payload(record)
         if record.exc_info:
             exception_type, exception, traceback = record.exc_info
             if exception_type is not None:
@@ -123,16 +92,44 @@ class JsonLogFormatter(logging.Formatter):
                 payload["exception_traceback"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
-    def _add_context_field(
-        self,
-        payload: dict[str, object],
-        key: str,
-        value: object | None,
-    ) -> None:
-        if value is None:
-            value = get_current_log_context_value(key)
-        if value is not None:
-            payload[key] = _to_json_safe(value)
+
+def build_json_log_payload(record: logging.LogRecord) -> dict[str, object]:
+    trace_id = getattr(record, "trace_id", None) or get_current_trace_id()
+    request_id = getattr(record, "request_id", None) or get_current_request_id()
+    if request_id is None:
+        request_id = trace_id or DEFAULT_TRACE_ID
+    payload: dict[str, object] = {
+        "timestamp": datetime.fromtimestamp(
+            record.created,
+            timezone.utc,
+        ).isoformat(timespec="milliseconds"),
+        "level": record.levelname,
+        "message": record.getMessage(),
+        "service": getattr(record, "service_name", record.name),
+        "trace_id": trace_id or DEFAULT_TRACE_ID,
+        "request_id": request_id,
+    }
+    _add_json_context_field(payload, "chat_id", getattr(record, "chat_id", None))
+    _add_json_context_field(payload, "user_id", getattr(record, "user_id", None))
+    _add_json_context_field(payload, "envelope_id", getattr(record, "envelope_id", None))
+    _add_json_context_field(payload, "causation_id", getattr(record, "causation_id", None))
+    structured_fields = getattr(record, "structured_fields", None)
+    if isinstance(structured_fields, dict):
+        for key, value in structured_fields.items():
+            if key not in _JSON_BASE_FIELDS:
+                payload[key] = _to_json_safe(value)
+    return payload
+
+
+def _add_json_context_field(
+    payload: dict[str, object],
+    key: str,
+    value: object | None,
+) -> None:
+    if value is None:
+        value = get_current_log_context_value(key)
+    if value is not None:
+        payload[key] = _to_json_safe(value)
 
 
 def log_event(
@@ -244,7 +241,7 @@ class MarkdownLogFormatter(logging.Formatter):
         self._use_colors = use_colors
 
     def format(self, record: logging.LogRecord) -> str:
-        message = record.getMessage()
+        message = self._format_message(record)
         if record.exc_info:
             message = (
                 f"{message}\n\n```text\n"
@@ -255,6 +252,53 @@ class MarkdownLogFormatter(logging.Formatter):
             header = self._colorize(header, record.levelname)
             message = self._render_console_message(message)
         return f"{header}\n{message}"
+
+    def _format_message(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        if self._is_markdown_event(message):
+            return message
+        rows = self._build_log_event_rows(record)
+        if not rows:
+            return message
+        return format_markdown_event(message, rows)
+
+    def _is_markdown_event(self, message: str) -> bool:
+        return message.startswith("### ") or "\n| " in message
+
+    def _build_log_event_rows(
+        self,
+        record: logging.LogRecord,
+    ) -> list[tuple[str, object]]:
+        rows: list[tuple[str, object]] = []
+        for label, key in (
+            ("Trace ID", "trace_id"),
+            ("Request ID", "request_id"),
+            ("Chat ID", "chat_id"),
+            ("User ID", "user_id"),
+            ("Envelope ID", "envelope_id"),
+            ("Causation ID", "causation_id"),
+        ):
+            value = getattr(record, key, None)
+            if value is None:
+                if key == "trace_id":
+                    value = get_current_trace_id()
+                elif key == "request_id":
+                    value = get_current_request_id()
+                else:
+                    value = get_current_log_context_value(key)
+            if value is not None:
+                rows.append((label, value))
+        structured_fields = getattr(record, "structured_fields", None)
+        if isinstance(structured_fields, dict):
+            rows.extend(
+                (self._format_field_name(key), _to_json_safe(value))
+                for key, value in structured_fields.items()
+                if key not in _JSON_BASE_FIELDS
+            )
+        return rows
+
+    def _format_field_name(self, key: str) -> str:
+        return key.replace("_", " ").title()
 
     def _colorize(self, header: str, level_name: str) -> str:
         color = LEVEL_COLORS.get(level_name)

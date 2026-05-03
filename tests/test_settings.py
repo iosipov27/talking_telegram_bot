@@ -51,4 +51,6 @@ class SettingsTestCase(unittest.TestCase):
             "OLLAMA_MODEL": "test-model",
             "OLLAMA_TIMEOUT_SECONDS": "10",
             "TAVILY_API_KEY": "tavily-key",
+            "SENTRY_DSN": "",
+            "SENTRY_ENVIRONMENT": "",
         }

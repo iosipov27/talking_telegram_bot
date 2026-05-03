@@ -65,7 +65,11 @@ from talking_telegram_bot.handlers.search_web_tool_handler import SearchWebToolH
 from talking_telegram_bot.handlers.select_model_handler import SelectModelHandler
 from talking_telegram_bot.handlers.show_role_handler import ShowRoleHandler
 from talking_telegram_bot.handlers.update_role_handler import UpdateRoleHandler
-from talking_telegram_bot.logging_utils import JsonLogFormatter, log_event
+from talking_telegram_bot.logging_utils import (
+    JsonLogFormatter,
+    MarkdownLogFormatter,
+    log_event,
+)
 from talking_telegram_bot.messages.commands import (
     ListModels,
     ProcessDocumentMessage,
@@ -397,7 +401,7 @@ def _build_shutdown_callback(
 def _configure_logging(log_file_path: Path = LOG_FILE_PATH) -> None:
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(JsonLogFormatter())
+    console_handler.setFormatter(MarkdownLogFormatter(use_colors=True))
     file_handler = RotatingFileHandler(
         log_file_path,
         maxBytes=LOG_MAX_BYTES,
