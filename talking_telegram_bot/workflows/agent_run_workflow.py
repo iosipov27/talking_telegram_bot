@@ -70,11 +70,12 @@ class AgentRunWorkflow:
                 log_event(
                     logger,
                     logging.ERROR,
-                    "Agent workflow failed.",
+                    str(exc),
                     trace_id=envelope.correlation_id,
                     chat_id=envelope.chat_id,
                     user_id=envelope.user_id,
-                    error=str(exc),
+                    workflow="agent_run",
+                    exc_info=True,
                 )
                 await self._publish_error(envelope)
                 return

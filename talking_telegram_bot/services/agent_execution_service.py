@@ -27,9 +27,8 @@ class AgentExecutionService:
         try:
             assistant_message = await self._ollama_client.generate_reply(request_messages)
         except OllamaClientError as exc:
-            raise AgentExecutionError("LLM is unavailable.") from exc
+            raise AgentExecutionError(str(exc)) from exc
         response_text = assistant_message.text.strip()
         if response_text:
             return response_text
         raise AgentExecutionError("LLM returned an empty response.")
-

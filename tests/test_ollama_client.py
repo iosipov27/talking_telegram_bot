@@ -224,6 +224,136 @@ class OllamaClientTestCase(unittest.IsolatedAsyncioTestCase):
 
         await http_client.aclose()
 
+    async def test_generate_reply_logs_http_status_body_and_stack_trace(self) -> None:
+        http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    500,
+                    text="internal ollama error",
+                ),
+            ),
+        )
+        client = OllamaClient(
+            base_url="http://ollama.local",
+            model="test-model",
+            timeout_seconds=10,
+            http_client=http_client,
+        )
+
+        with self.assertLogs(
+            "talking_telegram_bot.clients.ollama_client",
+            level="ERROR",
+        ) as logs:
+            with self.assertRaisesRegex(
+                OllamaClientError,
+                "Ollama request failed: HTTP 500.",
+            ):
+                await client.generate_reply(
+                    [ConversationMessage(role="user", content="ping")],
+                )
+
+        payload = self._format_json_records(logs.records)[0]
+        self.assertEqual(payload["message"], "Ollama request failed: HTTP 500.")
+        self.assertEqual(payload["reason"], "http_status")
+        self.assertEqual(payload["status_code"], 500)
+        self.assertEqual(payload["response_body"], "internal ollama error")
+        self.assertEqual(payload["exception_type"], "HTTPStatusError")
+        self.assertIn("exception_traceback", payload)
+        await http_client.aclose()
+
+    async def test_generate_reply_logs_model_not_found_reason(self) -> None:
+        http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    404,
+                    json={"error": "model 'missing-model' not found"},
+                ),
+            ),
+        )
+        client = OllamaClient(
+            base_url="http://ollama.local",
+            model="missing-model",
+            timeout_seconds=10,
+            http_client=http_client,
+        )
+
+        with self.assertLogs(
+            "talking_telegram_bot.clients.ollama_client",
+            level="ERROR",
+        ) as logs:
+            with self.assertRaisesRegex(
+                OllamaClientError,
+                "Ollama request failed: model not found.",
+            ):
+                await client.generate_reply(
+                    [ConversationMessage(role="user", content="ping")],
+                )
+
+        payload = self._format_json_records(logs.records)[0]
+        self.assertEqual(payload["reason"], "model_not_found")
+        self.assertEqual(payload["status_code"], 404)
+        self.assertIn("missing-model", payload["response_body"])
+        await http_client.aclose()
+
+    async def test_generate_reply_logs_timeout_reason(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("request timed out", request=request)
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = OllamaClient(
+            base_url="http://ollama.local",
+            model="test-model",
+            timeout_seconds=10,
+            http_client=http_client,
+        )
+
+        with self.assertLogs(
+            "talking_telegram_bot.clients.ollama_client",
+            level="ERROR",
+        ) as logs:
+            with self.assertRaisesRegex(
+                OllamaClientError,
+                "Ollama request failed: timeout.",
+            ):
+                await client.generate_reply(
+                    [ConversationMessage(role="user", content="ping")],
+                )
+
+        payload = self._format_json_records(logs.records)[0]
+        self.assertEqual(payload["reason"], "timeout")
+        self.assertEqual(payload["timeout_seconds"], 10)
+        self.assertEqual(payload["exception_type"], "ReadTimeout")
+        await http_client.aclose()
+
+    async def test_generate_reply_logs_connection_refused_reason(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("Connection refused", request=request)
+
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = OllamaClient(
+            base_url="http://ollama.local",
+            model="test-model",
+            timeout_seconds=10,
+            http_client=http_client,
+        )
+
+        with self.assertLogs(
+            "talking_telegram_bot.clients.ollama_client",
+            level="ERROR",
+        ) as logs:
+            with self.assertRaisesRegex(
+                OllamaClientError,
+                "Ollama request failed: connection refused.",
+            ):
+                await client.generate_reply(
+                    [ConversationMessage(role="user", content="ping")],
+                )
+
+        payload = self._format_json_records(logs.records)[0]
+        self.assertEqual(payload["reason"], "connection_refused")
+        self.assertEqual(payload["exception_type"], "ConnectError")
+        await http_client.aclose()
+
     def _format_json_records(self, records) -> list[dict[str, object]]:
         formatter = JsonLogFormatter()
         return [json_loads(formatter.format(record)) for record in records]

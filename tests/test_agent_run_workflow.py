@@ -171,7 +171,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
         response_service = AgentResponseService()
         agent_execution_service = AsyncMock()
         agent_execution_service.request_step.side_effect = AgentExecutionError(
-            "LLM is unavailable.",
+            "Ollama request failed: timeout.",
         )
         collector = _EventCollector()
         event_bus.subscribe(
@@ -198,7 +198,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
 
         self.assertEqual(collector.errors, [SAFE_LLM_ERROR_MESSAGE])
-        self.assertIn("Agent workflow failed.", "\n".join(logs.output))
+        self.assertIn("Ollama request failed: timeout.", "\n".join(logs.output))
         await event_bus.stop()
 
     async def test_workflow_fails_safely_when_tool_times_out(self) -> None:
@@ -221,12 +221,16 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
         )
         event_bus.subscribe(UserFacingErrorRaised, collector)
 
-        await event_bus.publish_and_wait(
-            AgentRunRequested(system_prompt="system", user_prompt="user task"),
-            correlation_id="corr-timeout",
-            user_id=123,
-        )
-        await asyncio.sleep(0.05)
+        with self.assertLogs(
+            "talking_telegram_bot.workflows.agent_run_workflow",
+            level="ERROR",
+        ):
+            await event_bus.publish_and_wait(
+                AgentRunRequested(system_prompt="system", user_prompt="user task"),
+                correlation_id="corr-timeout",
+                user_id=123,
+            )
+            await asyncio.sleep(0.05)
 
         self.assertEqual(collector.errors, [SAFE_LLM_ERROR_MESSAGE])
         await event_bus.stop()

@@ -10,6 +10,7 @@ from talking_telegram_bot.logging_utils import log_event
 from talking_telegram_bot.models.messages import AssistantMessage, ConversationMessage
 
 logger = logging.getLogger(__name__)
+MAX_ERROR_RESPONSE_BODY_LENGTH = 4000
 
 
 class OllamaClientError(RuntimeError):
@@ -30,6 +31,7 @@ class OllamaClient:
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._timeout_seconds = timeout_seconds
         self._owns_http_client = http_client is None
         self._http_client = http_client or httpx.AsyncClient(timeout=timeout_seconds)
 
@@ -56,11 +58,41 @@ class OllamaClient:
             )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise OllamaTimeoutError("Ollama request timed out.") from exc
+            self._log_request_failed(
+                "timeout",
+                method="POST",
+                endpoint="/api/chat",
+            )
+            raise OllamaTimeoutError("Ollama request failed: timeout.") from exc
         except httpx.HTTPStatusError as exc:
-            raise OllamaClientError("Ollama returned an unsuccessful status.") from exc
+            reason = self._read_status_failure_reason(exc.response)
+            self._log_request_failed(
+                reason,
+                method="POST",
+                endpoint="/api/chat",
+                status_code=exc.response.status_code,
+                response_body=self._read_error_response_body(exc.response),
+            )
+            raise OllamaClientError(
+                self._build_failure_message(reason, exc.response.status_code),
+            ) from exc
+        except httpx.ConnectError as exc:
+            reason = self._read_connection_failure_reason(exc)
+            self._log_request_failed(
+                reason,
+                method="POST",
+                endpoint="/api/chat",
+            )
+            raise OllamaClientError(
+                self._build_failure_message(reason),
+            ) from exc
         except httpx.HTTPError as exc:
-            raise OllamaClientError("Ollama request failed.") from exc
+            self._log_request_failed(
+                "http_error",
+                method="POST",
+                endpoint="/api/chat",
+            )
+            raise OllamaClientError("Ollama request failed: http error.") from exc
         assistant_message = AssistantMessage(
             text=self._extract_content(self._read_json(response)),
         )
@@ -86,11 +118,41 @@ class OllamaClient:
             response = await self._http_client.get(url)
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise OllamaTimeoutError("Ollama model list request timed out.") from exc
+            self._log_request_failed(
+                "timeout",
+                method="GET",
+                endpoint="/api/tags",
+            )
+            raise OllamaTimeoutError("Ollama request failed: timeout.") from exc
         except httpx.HTTPStatusError as exc:
-            raise OllamaClientError("Ollama returned an unsuccessful status.") from exc
+            reason = self._read_status_failure_reason(exc.response)
+            self._log_request_failed(
+                reason,
+                method="GET",
+                endpoint="/api/tags",
+                status_code=exc.response.status_code,
+                response_body=self._read_error_response_body(exc.response),
+            )
+            raise OllamaClientError(
+                self._build_failure_message(reason, exc.response.status_code),
+            ) from exc
+        except httpx.ConnectError as exc:
+            reason = self._read_connection_failure_reason(exc)
+            self._log_request_failed(
+                reason,
+                method="GET",
+                endpoint="/api/tags",
+            )
+            raise OllamaClientError(
+                self._build_failure_message(reason),
+            ) from exc
         except httpx.HTTPError as exc:
-            raise OllamaClientError("Ollama model list request failed.") from exc
+            self._log_request_failed(
+                "http_error",
+                method="GET",
+                endpoint="/api/tags",
+            )
+            raise OllamaClientError("Ollama request failed: http error.") from exc
         model_names = self._extract_model_names(self._read_json(response))
         log_event(
             logger,
@@ -125,6 +187,62 @@ class OllamaClient:
             return response.json()
         except ValueError as exc:
             raise OllamaClientError("Ollama returned an invalid JSON payload.") from exc
+
+    def _read_status_failure_reason(self, response: httpx.Response) -> str:
+        body = self._read_error_response_body(response).lower()
+        if response.status_code == 404 and "model" in body and "not found" in body:
+            return "model_not_found"
+        return "http_status"
+
+    def _read_connection_failure_reason(self, error: httpx.ConnectError) -> str:
+        message = str(error).lower()
+        if "connection refused" in message or "connect call failed" in message:
+            return "connection_refused"
+        return "connection_error"
+
+    def _read_error_response_body(self, response: httpx.Response) -> str:
+        body = response.text
+        if len(body) <= MAX_ERROR_RESPONSE_BODY_LENGTH:
+            return body
+        return f"{body[:MAX_ERROR_RESPONSE_BODY_LENGTH]}... [truncated]"
+
+    def _build_failure_message(
+        self,
+        reason: str,
+        status_code: int | None = None,
+    ) -> str:
+        readable_reason = reason.replace("_", " ")
+        if status_code is not None and reason == "http_status":
+            return f"Ollama request failed: HTTP {status_code}."
+        return f"Ollama request failed: {readable_reason}."
+
+    def _log_request_failed(
+        self,
+        reason: str,
+        *,
+        method: str,
+        endpoint: str,
+        status_code: int | None = None,
+        response_body: str | None = None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "method": method,
+            "endpoint": endpoint,
+            "model": self._model,
+            "reason": reason,
+            "timeout_seconds": self._timeout_seconds,
+        }
+        if status_code is not None:
+            fields["status_code"] = status_code
+        if response_body is not None:
+            fields["response_body"] = response_body
+        log_event(
+            logger,
+            logging.ERROR,
+            self._build_failure_message(reason, status_code),
+            **fields,
+            exc_info=True,
+        )
 
     def _extract_content(self, data: Any) -> str:
         if not isinstance(data, dict):
