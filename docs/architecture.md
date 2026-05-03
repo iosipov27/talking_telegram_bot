@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the architecture that is now wired in `main.py`, plus the legacy compatibility layer that still exists in the repository.
+This document describes the active architecture wired in `main.py`.
 
 ## Current Runtime
 
@@ -11,6 +11,7 @@ The active runtime is a single-process event-driven bot built on native Python p
 - class-based event subscribers
 - one outbound Telegram adapter for replies, progress updates, and callback edits
 - one workflow for the multi-step agent loop
+- one in-process tool dispatcher with bounded execution time
 
 ## Current Bootstrap Flow
 
@@ -19,15 +20,16 @@ talking_telegram_bot.__main__
   -> main.main()
   -> _configure_logging()
   -> load_settings()
-  -> OllamaClient / TavilyClient
-  -> InMemoryCommandBus / InMemoryEventBus
-  -> runtime services
-  -> command handlers
-  -> event subscribers
+  -> _build_clients()
+  -> _build_buses()
+  -> _build_services()
+  -> _build_controllers()
+  -> _register_command_handlers()
+  -> _register_event_subscribers()
   -> python-telegram-bot Application
 ```
 
-`main.py` now wires the new event-driven path. The old `TelegramMessageController`, `MessageService`, and `AutonomousAgentService` are still present as a compatibility layer and remain covered by the existing tests, but they are no longer the runtime path used by the app bootstrap.
+`main.py` is the composition root. It builds clients, buses, services, controllers, command handlers, and event subscribers, but does not own request processing logic.
 
 The active runtime now has a deterministic weather router in front of the agent plus two agent tools:
 - pre-agent weather routing for weather questions without a date;
@@ -48,8 +50,8 @@ TelegramTextController
   -> ProcessTextMessageHandler
   -> WeatherQueryRouterService
   -> weather path: LocationNormalizationService -> WeatherService -> WeatherReplyFormatterService -> ReplyReady
-  -> agent path: StartTelegramResponseSession -> AgentRunRequested -> AgentRunWorkflow
-  -> ToolExecutionRequested / ProgressUpdated / ReplyReady
+  -> agent path: AgentRequestOrchestratorService -> AgentRunRequested -> AgentRunWorkflow
+  -> AgentToolDispatcherService / ProgressUpdated / ReplyReady
   -> TelegramOutboundController
 ```
 
@@ -61,10 +63,9 @@ TelegramDocumentController
   -> InMemoryCommandBus.execute(ProcessDocumentMessage)
   -> ProcessDocumentMessageHandler
   -> FileProcessingService validation
-  -> InMemoryEventBus.publish_and_wait(StartTelegramResponseSession)
-  -> InMemoryEventBus.publish_and_wait(AgentRunRequested)
+  -> AgentRequestOrchestratorService
   -> AgentRunWorkflow
-  -> ToolExecutionRequested / ProgressUpdated / ReplyReady
+  -> AgentToolDispatcherService / ProgressUpdated / ReplyReady
   -> TelegramOutboundController
 ```
 
@@ -72,7 +73,7 @@ TelegramDocumentController
 
 ```text
 AgentRunWorkflow
-  -> ToolExecutionRequested(action="search_web" | "calculator")
+  -> AgentToolDispatcherService.execute_tool(action="search_web" | "calculator")
   -> SearchWebToolHandler | CalculatorToolHandler
   -> tool observation
   -> AgentRunWorkflow
@@ -124,29 +125,31 @@ TelegramCallbackController
 
 | Module | Class | Responsibility | Direct dependencies |
 |---|---|---|---|
-| `talking_telegram_bot/handlers/process_text_message_handler.py` | `ProcessTextMessageHandler` | Normalizes inbound text, routes no-date weather questions before the agent, and otherwise triggers the agent workflow | `MessageInputService`, `PromptBuilderService`, `WeatherQueryRouterService`, `WeatherService`, `WeatherReplyFormatterService`, `InMemoryEventBus` |
-| `talking_telegram_bot/handlers/process_document_message_handler.py` | `ProcessDocumentMessageHandler` | Validates documents, builds prompt text, starts a Telegram response session, and triggers the agent workflow | `FileProcessingService`, `PromptBuilderService`, `InMemoryEventBus` |
+| `talking_telegram_bot/handlers/process_text_message_handler.py` | `ProcessTextMessageHandler` | Normalizes inbound text, routes no-date weather questions before the agent, and otherwise triggers the agent workflow | `MessageInputService`, `AgentRequestOrchestratorService`, `WeatherQueryRouterService`, `WeatherService`, `WeatherReplyFormatterService`, `InMemoryEventBus` |
+| `talking_telegram_bot/handlers/process_document_message_handler.py` | `ProcessDocumentMessageHandler` | Validates documents, builds prompt text, and triggers the agent workflow | `FileProcessingService`, `AgentRequestOrchestratorService`, `InMemoryEventBus` |
 | `talking_telegram_bot/handlers/list_models_handler.py` | `ListModelsHandler` | Loads the active model list and emits `ModelListReady` | `ModelRuntimeService`, `InMemoryEventBus` |
 | `talking_telegram_bot/handlers/show_role_handler.py` | `ShowRoleHandler` | Returns the current runtime role | `RoleRuntimeService`, `InMemoryEventBus` |
 | `talking_telegram_bot/handlers/update_role_handler.py` | `UpdateRoleHandler` | Updates the runtime role and returns the selected role or current-role message | `RoleRuntimeService`, `InMemoryEventBus` |
 | `talking_telegram_bot/handlers/select_model_handler.py` | `SelectModelHandler` | Parses callback payloads, switches the runtime model, and emits callback text updates | `ModelRuntimeService`, `InMemoryEventBus` |
-| `talking_telegram_bot/handlers/search_web_tool_handler.py` | `SearchWebToolHandler` | Executes `search_web` tool requests and reports tool observations through a future | `SearchWebService`, `AgentResponseService`, `InMemoryEventBus` |
-| `talking_telegram_bot/handlers/calculator_tool_handler.py` | `CalculatorToolHandler` | Executes `calculator` tool requests and reports tool observations through a future | `CalculatorService`, `AgentResponseService` |
+| `talking_telegram_bot/handlers/search_web_tool_handler.py` | `SearchWebToolHandler` | Executes `search_web` tool requests and publishes progress updates | `SearchWebService`, `AgentResponseService`, `InMemoryEventBus` |
+| `talking_telegram_bot/handlers/calculator_tool_handler.py` | `CalculatorToolHandler` | Executes `calculator` tool requests | `CalculatorService`, `AgentResponseService` |
 
 ### Workflow
 
 | Module | Class | Responsibility | Direct dependencies |
 |---|---|---|---|
-| `talking_telegram_bot/workflows/agent_run_workflow.py` | `AgentRunWorkflow` | Owns the multi-step LLM loop, emits progress updates, requests tools, and emits the final reply or safe error | `AgentExecutionService`, `AgentResponseService`, `ConversationLockService`, `InMemoryEventBus` |
+| `talking_telegram_bot/workflows/agent_run_workflow.py` | `AgentRunWorkflow` | Owns the multi-step LLM loop, emits progress updates, requests tools, and emits the final reply or safe error | `AgentExecutionService`, `AgentResponseService`, `AgentToolDispatcherService`, `ConversationLockService`, `InMemoryEventBus` |
 
 ### Runtime Services
 
 | Module | Class | Responsibility | Direct dependencies |
 |---|---|---|---|
 | `talking_telegram_bot/services/message_input_service.py` | `MessageInputService` | Normalizes raw user text and rejects empty input | none |
+| `talking_telegram_bot/services/agent_request_orchestrator_service.py` | `AgentRequestOrchestratorService` | Publishes common inbound message and agent-start events for text and document flows | `PromptBuilderService`, `InMemoryEventBus` |
 | `talking_telegram_bot/services/prompt_builder_service.py` | `PromptBuilderService` | Builds the system prompt from the current runtime role | `RoleRuntimeService` |
 | `talking_telegram_bot/services/agent_execution_service.py` | `AgentExecutionService` | Executes one LLM step against Ollama | `OllamaClient`, `AgentRequestBuilderService` |
 | `talking_telegram_bot/services/agent_response_service.py` | `AgentResponseService` | Parses agent JSON, final answers, and tool calls | none |
+| `talking_telegram_bot/services/agent_tool_dispatcher_service.py` | `AgentToolDispatcherService` | Looks up tool handlers by action name and enforces a timeout around tool execution | `asyncio.wait_for()` |
 | `talking_telegram_bot/services/conversation_lock_service.py` | `ConversationLockService` | Ensures one active agent run per user at a time | `asyncio.Lock` |
 | `talking_telegram_bot/services/role_runtime_service.py` | `RoleRuntimeService` | Stores and validates the in-memory runtime role | none |
 | `talking_telegram_bot/services/model_runtime_service.py` | `ModelRuntimeService` | Stores and switches the in-memory active model | `OllamaClient` |
@@ -186,7 +189,6 @@ TelegramCallbackController
 | `talking_telegram_bot/messages/events.py` | `CallbackTextRequested` | Edit callback query text |
 | `talking_telegram_bot/messages/events.py` | `ModelListReady` | Deliver model list payload for keyboard rendering |
 | `talking_telegram_bot/messages/events.py` | `AgentRunRequested` | Trigger the multi-step agent workflow |
-| `talking_telegram_bot/messages/events.py` | `ToolExecutionRequested` | Request a tool observation from one of the tool subscribers |
 
 ## Current Ownership Rules
 
@@ -194,24 +196,13 @@ TelegramCallbackController
 - Command handlers own one use-case entry each.
 - No-date weather questions are handled deterministically before the LLM loop starts.
 - `AgentRunWorkflow` owns the agent loop and nothing else.
+- `AgentToolDispatcherService` owns tool lookup and tool timeouts.
 - Outbound Telegram IO is centralized in `TelegramOutboundController`.
 - Services stay transport-agnostic.
 - Clients own raw IO and low-level failures.
-- The old synchronous stack stays in the tree as a compatibility layer until a later cleanup removes it.
+- There is no legacy synchronous runtime path in the package.
 
-## Legacy Compatibility Layer
+## Architecture Decisions
 
-These classes still exist and still have tests, but they are no longer the `main.py` runtime path:
-
-- `talking_telegram_bot/controllers/telegram_controller.py`
-- `talking_telegram_bot/services/message_service.py`
-- `talking_telegram_bot/services/autonomous_agent_service.py`
-- `talking_telegram_bot/services/model_service.py`
-- `talking_telegram_bot/services/agent_tool_service.py`
-
-They can be removed in a later cleanup once every remaining caller and test target has been moved to the new command and event path.
-
-## Next Migration Steps
-
-1. Move or rewrite the legacy controller and service tests so they target the new runtime path directly.
-2. Remove the old synchronous compatibility layer once the new path is the only supported path.
+- `docs/adr/0001-single-process-event-driven-bot.md`
+- `docs/adr/0002-client-owned-external-io.md`

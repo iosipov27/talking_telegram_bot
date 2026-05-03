@@ -18,6 +18,9 @@ from talking_telegram_bot.messages.events import (
     TextReplyRequested,
 )
 from talking_telegram_bot.models.weather import WeatherForecastDay, WeatherResponse
+from talking_telegram_bot.services.agent_request_orchestrator_service import (
+    AgentRequestOrchestratorService,
+)
 from talking_telegram_bot.services.message_input_service import MessageInputService
 from talking_telegram_bot.services.prompt_builder_service import PromptBuilderService
 from talking_telegram_bot.services.weather_query_router_service import (
@@ -66,7 +69,10 @@ class ProcessTextMessageHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         formatter.format_reply.return_value = "weather reply"
         handler = ProcessTextMessageHandler(
             MessageInputService(),
-            Mock(spec=PromptBuilderService),
+            AgentRequestOrchestratorService(
+                Mock(spec=PromptBuilderService),
+                event_bus,
+            ),
             event_bus,
             WeatherQueryRouterService(),
             weather_service,
@@ -118,7 +124,10 @@ class ProcessTextMessageHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         event_bus = AsyncMock()
         handler = ProcessTextMessageHandler(
             MessageInputService(),
-            Mock(spec=PromptBuilderService),
+            AgentRequestOrchestratorService(
+                Mock(spec=PromptBuilderService),
+                event_bus,
+            ),
             event_bus,
             WeatherQueryRouterService(),
             AsyncMock(spec=WeatherService),
@@ -166,7 +175,10 @@ class ProcessTextMessageHandlerTestCase(unittest.IsolatedAsyncioTestCase):
         weather_service = AsyncMock(spec=WeatherService)
         handler = ProcessTextMessageHandler(
             MessageInputService(),
-            prompt_builder_service,
+            AgentRequestOrchestratorService(
+                prompt_builder_service,
+                event_bus,
+            ),
             event_bus,
             WeatherQueryRouterService(),
             weather_service,

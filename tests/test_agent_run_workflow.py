@@ -9,7 +9,6 @@ from talking_telegram_bot.messages.events import (
     AgentRunRequested,
     ProgressUpdated,
     ReplyReady,
-    ToolExecutionRequested,
     UserFacingErrorRaised,
 )
 from talking_telegram_bot.models.search import SearchWebResponse, SearchWebResult
@@ -17,6 +16,9 @@ from talking_telegram_bot.constants.user_messages import SAFE_LLM_ERROR_MESSAGE
 from talking_telegram_bot.models.messages import ConversationMessage
 from talking_telegram_bot.services.agent_response_service import AgentResponseService
 from talking_telegram_bot.services.agent_execution_service import AgentExecutionError
+from talking_telegram_bot.services.agent_tool_dispatcher_service import (
+    AgentToolDispatcherService,
+)
 from talking_telegram_bot.services.conversation_lock_service import (
     ConversationLockService,
 )
@@ -37,6 +39,15 @@ class _EventCollector:
             self.replies.append(envelope.message.text)
         elif isinstance(envelope.message, UserFacingErrorRaised):
             self.errors.append(envelope.message.text)
+
+
+class _SlowTool:
+    action_name = "slow_tool"
+
+    async def execute(self, args, context) -> str:
+        del args, context
+        await asyncio.sleep(1)
+        return "too late"
 
 
 class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
@@ -65,13 +76,18 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
             AgentRunWorkflow(
                 agent_execution_service,
                 response_service,
+                AgentToolDispatcherService(
+                    [
+                        SearchWebToolHandler(
+                            response_service,
+                            search_web_service,
+                            event_bus,
+                        ),
+                    ],
+                ),
                 event_bus,
                 ConversationLockService(),
             ),
-        )
-        event_bus.subscribe(
-            ToolExecutionRequested,
-            SearchWebToolHandler(response_service, search_web_service, event_bus),
         )
         event_bus.subscribe(ProgressUpdated, collector)
         event_bus.subscribe(ReplyReady, collector)
@@ -122,13 +138,18 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
             AgentRunWorkflow(
                 agent_execution_service,
                 response_service,
+                AgentToolDispatcherService(
+                    [
+                        SearchWebToolHandler(
+                            response_service,
+                            search_web_service,
+                            event_bus,
+                        ),
+                    ],
+                ),
                 event_bus,
                 ConversationLockService(),
             ),
-        )
-        event_bus.subscribe(
-            ToolExecutionRequested,
-            SearchWebToolHandler(response_service, search_web_service, event_bus),
         )
         event_bus.subscribe(ReplyReady, collector)
 
@@ -158,6 +179,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
             AgentRunWorkflow(
                 agent_execution_service,
                 response_service,
+                AgentToolDispatcherService([]),
                 event_bus,
                 ConversationLockService(),
             ),
@@ -179,6 +201,36 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Agent workflow failed.", "\n".join(logs.output))
         await event_bus.stop()
 
+    async def test_workflow_fails_safely_when_tool_times_out(self) -> None:
+        event_bus = InMemoryEventBus(worker_count=4)
+        response_service = AgentResponseService()
+        agent_execution_service = AsyncMock()
+        agent_execution_service.request_step.return_value = (
+            '{"thought":"needs slow tool","action":"slow_tool","args":{}}'
+        )
+        collector = _EventCollector()
+        event_bus.subscribe(
+            AgentRunRequested,
+            AgentRunWorkflow(
+                agent_execution_service,
+                response_service,
+                AgentToolDispatcherService([_SlowTool()], timeout_seconds=0.01),
+                event_bus,
+                ConversationLockService(),
+            ),
+        )
+        event_bus.subscribe(UserFacingErrorRaised, collector)
+
+        await event_bus.publish_and_wait(
+            AgentRunRequested(system_prompt="system", user_prompt="user task"),
+            correlation_id="corr-timeout",
+            user_id=123,
+        )
+        await asyncio.sleep(0.05)
+
+        self.assertEqual(collector.errors, [SAFE_LLM_ERROR_MESSAGE])
+        await event_bus.stop()
+
     async def test_workflow_sends_saved_context_to_agent(self) -> None:
         event_bus = InMemoryEventBus(worker_count=4)
         response_service = AgentResponseService()
@@ -195,6 +247,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
             AgentRunWorkflow(
                 agent_execution_service,
                 response_service,
+                AgentToolDispatcherService([]),
                 event_bus,
                 ConversationLockService(),
                 conversation_context_service,
@@ -232,6 +285,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
             AgentRunWorkflow(
                 agent_execution_service,
                 response_service,
+                AgentToolDispatcherService([]),
                 event_bus,
                 ConversationLockService(),
             ),

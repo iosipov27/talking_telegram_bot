@@ -14,12 +14,12 @@ from talking_telegram_bot.constants.user_messages import (
 )
 from talking_telegram_bot.messages.commands import ProcessDocumentMessage
 from talking_telegram_bot.messages.events import (
-    AgentRunRequested,
-    MessageReceived,
     ResponseGenerated,
-    StartTelegramResponseSession,
     TextReplyRequested,
     UserFacingErrorRaised,
+)
+from talking_telegram_bot.services.agent_request_orchestrator_service import (
+    AgentRequestOrchestratorService,
 )
 from talking_telegram_bot.services.file_processing_service import (
     FileProcessingError,
@@ -27,7 +27,6 @@ from talking_telegram_bot.services.file_processing_service import (
     FileTooLargeError,
     UnsupportedFileTypeError,
 )
-from talking_telegram_bot.services.prompt_builder_service import PromptBuilderService
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +35,11 @@ class ProcessDocumentMessageHandler:
     def __init__(
         self,
         file_processing_service: FileProcessingService,
-        prompt_builder_service: PromptBuilderService,
+        agent_request_orchestrator_service: AgentRequestOrchestratorService,
         event_bus: InMemoryEventBus,
     ) -> None:
         self._file_processing_service = file_processing_service
-        self._prompt_builder_service = prompt_builder_service
+        self._agent_request_orchestrator_service = agent_request_orchestrator_service
         self._event_bus = event_bus
 
     async def handle(self, envelope: MessageEnvelope[ProcessDocumentMessage]) -> None:
@@ -81,39 +80,16 @@ class ProcessDocumentMessageHandler:
             file_size=envelope.message.file_size or 0,
             prompt_length=len(prompt_text),
         )
-        await self._event_bus.publish_and_wait(
-            MessageReceived(text=prompt_text),
-            correlation_id=envelope.correlation_id,
-            causation_id=envelope.message_id,
-            chat_id=envelope.chat_id,
-            user_id=envelope.user_id,
-        )
-        await self._event_bus.publish_and_wait(
-            StartTelegramResponseSession(message=envelope.message.message),
-            correlation_id=envelope.correlation_id,
-            causation_id=envelope.message_id,
-            chat_id=envelope.chat_id,
-            user_id=envelope.user_id,
+        await self._agent_request_orchestrator_service.publish_message_received(
+            envelope,
+            prompt_text,
         )
         try:
-            log_event(
-                logger,
-                logging.INFO,
-                log_events.AGENT_RUN_REQUESTED,
-                trace_id=envelope.correlation_id,
-                chat_id=envelope.chat_id,
-                user_id=envelope.user_id,
-                source="document",
-            )
-            await self._event_bus.publish_and_wait(
-                AgentRunRequested(
-                    system_prompt=self._prompt_builder_service.build_system_prompt(),
-                    user_prompt=prompt_text,
-                ),
-                correlation_id=envelope.correlation_id,
-                causation_id=envelope.message_id,
-                chat_id=envelope.chat_id,
-                user_id=envelope.user_id,
+            await self._agent_request_orchestrator_service.start_agent_response(
+                envelope,
+                envelope.message.message,
+                prompt_text,
+                "document",
             )
         except Exception:
             log_event(

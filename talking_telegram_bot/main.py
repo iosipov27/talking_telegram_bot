@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -88,14 +89,19 @@ from talking_telegram_bot.messages.events import (
     ResponseGenerated,
     StartTelegramResponseSession,
     TextReplyRequested,
-    ToolExecutionRequested,
     UserFacingErrorRaised,
 )
 from talking_telegram_bot.services.agent_execution_service import AgentExecutionService
 from talking_telegram_bot.services.agent_request_builder_service import (
     AgentRequestBuilderService,
 )
+from talking_telegram_bot.services.agent_request_orchestrator_service import (
+    AgentRequestOrchestratorService,
+)
 from talking_telegram_bot.services.agent_response_service import AgentResponseService
+from talking_telegram_bot.services.agent_tool_dispatcher_service import (
+    AgentToolDispatcherService,
+)
 from talking_telegram_bot.services.calculator_service import CalculatorService
 from talking_telegram_bot.services.conversation_context_service import (
     ConversationContextService,
@@ -131,10 +137,67 @@ from talking_telegram_bot.workflows.agent_run_workflow import AgentRunWorkflow
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class _RuntimeClients:
+    ollama: OllamaClient
+    tavily: TavilyClient
+    nominatim: NominatimClient
+    wttr: WttrClient
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeBuses:
+    command: InMemoryCommandBus
+    event: InMemoryEventBus
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeServices:
+    message_input: MessageInputService
+    agent_request_orchestrator: AgentRequestOrchestratorService
+    weather_query_router: WeatherQueryRouterService
+    weather: WeatherService
+    weather_reply_formatter: WeatherReplyFormatterService
+    file_processing: FileProcessingService
+    model_runtime: ModelRuntimeService
+    role_runtime: RoleRuntimeService
+    agent_execution: AgentExecutionService
+    agent_response: AgentResponseService
+    agent_tool_dispatcher: AgentToolDispatcherService
+    conversation_lock: ConversationLockService
+    conversation_context: ConversationContextService | None
+    history_event_subscriber: HistoryEventSubscriber | None
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeControllers:
+    text: TelegramTextController
+    document: TelegramDocumentController
+    command: TelegramCommandController
+    callback: TelegramCallbackController
+    outbound: TelegramOutboundController
+
+
 def main() -> None:
     _configure_logging()
+    settings = _load_runtime_settings()
+    _configure_sentry(settings)
+
+    clients = _build_clients(settings)
+    buses = _build_buses(settings)
+    services = _build_services(settings, clients, buses)
+    controllers = _build_controllers(buses)
+
+    _register_command_handlers(buses, services)
+    _register_event_subscribers(buses, services, controllers)
+
+    application = _build_application(settings, controllers, clients, buses)
+    application.run_polling()
+
+
+def _load_runtime_settings() -> Settings:
     try:
-        settings = load_settings()
+        return load_settings()
     except SettingsError:
         log_event(
             logger,
@@ -143,6 +206,9 @@ def main() -> None:
             exc_info=True,
         )
         raise
+
+
+def _configure_sentry(settings: Settings) -> None:
     try:
         sentry_enabled = configure_sentry(
             dsn=settings.sentry_dsn,
@@ -164,6 +230,8 @@ def main() -> None:
             environment=settings.sentry_environment,
         )
 
+
+def _build_clients(settings: Settings) -> _RuntimeClients:
     ollama_client = OllamaClient(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
@@ -183,6 +251,15 @@ def main() -> None:
         base_url=settings.wttr_base_url,
         timeout_seconds=settings.wttr_timeout_seconds,
     )
+    return _RuntimeClients(
+        ollama=ollama_client,
+        tavily=tavily_client,
+        nominatim=nominatim_client,
+        wttr=wttr_client,
+    )
+
+
+def _build_buses(settings: Settings) -> _RuntimeBuses:
     dead_letter_writer = DeadLetterWriter()
     command_bus = InMemoryCommandBus(
         dead_letter_writer=dead_letter_writer,
@@ -192,98 +269,152 @@ def main() -> None:
         dead_letter_writer=dead_letter_writer,
         worker_count=max(4, settings.telegram_concurrent_updates),
     )
-    search_web_service = SearchWebService(tavily_client)
-    location_normalization_service = LocationNormalizationService(nominatim_client)
-    weather_service = WeatherService(wttr_client, location_normalization_service)
+    return _RuntimeBuses(command=command_bus, event=event_bus)
+
+
+def _build_services(
+    settings: Settings,
+    clients: _RuntimeClients,
+    buses: _RuntimeBuses,
+) -> _RuntimeServices:
+    search_web_service = SearchWebService(clients.tavily)
+    location_normalization_service = LocationNormalizationService(clients.nominatim)
+    weather_service = WeatherService(clients.wttr, location_normalization_service)
     calculator_service = CalculatorService()
     role_runtime_service = RoleRuntimeService(settings.ollama_agent_role)
-    model_runtime_service = ModelRuntimeService(ollama_client)
+    model_runtime_service = ModelRuntimeService(clients.ollama)
     message_input_service = MessageInputService()
     prompt_builder_service = PromptBuilderService(role_runtime_service)
+    agent_request_orchestrator_service = AgentRequestOrchestratorService(
+        prompt_builder_service,
+        buses.event,
+    )
     weather_query_router_service = WeatherQueryRouterService()
     weather_reply_formatter_service = WeatherReplyFormatterService()
     agent_execution_service = AgentExecutionService(
-        ollama_client,
+        clients.ollama,
         AgentRequestBuilderService(),
     )
     response_service = AgentResponseService()
     file_processing_service = FileProcessingService()
     conversation_lock_service = ConversationLockService()
+    search_web_tool_handler = SearchWebToolHandler(
+        response_service,
+        search_web_service,
+        buses.event,
+    )
+    calculator_tool_handler = CalculatorToolHandler(
+        response_service,
+        calculator_service,
+    )
+    tool_dispatcher_service = AgentToolDispatcherService(
+        [search_web_tool_handler, calculator_tool_handler],
+    )
     conversation_context_service = None
     history_event_subscriber = None
     if settings.conversation_history_enabled:
         conversation_context_service = ConversationContextService(ChatHistoryClient())
         conversation_summary_service = ConversationSummaryService(
             conversation_context_service,
-            ollama_client,
+            clients.ollama,
         )
         history_event_subscriber = HistoryEventSubscriber(
             conversation_context_service,
             conversation_summary_service,
         )
-    outbound_controller = TelegramOutboundController()
-    text_controller = TelegramTextController(command_bus, event_bus)
-    document_controller = TelegramDocumentController(command_bus, event_bus)
-    command_controller = TelegramCommandController(command_bus)
-    callback_controller = TelegramCallbackController(command_bus)
+    return _RuntimeServices(
+        message_input=message_input_service,
+        agent_request_orchestrator=agent_request_orchestrator_service,
+        weather_query_router=weather_query_router_service,
+        weather=weather_service,
+        weather_reply_formatter=weather_reply_formatter_service,
+        file_processing=file_processing_service,
+        model_runtime=model_runtime_service,
+        role_runtime=role_runtime_service,
+        agent_execution=agent_execution_service,
+        agent_response=response_service,
+        agent_tool_dispatcher=tool_dispatcher_service,
+        conversation_lock=conversation_lock_service,
+        conversation_context=conversation_context_service,
+        history_event_subscriber=history_event_subscriber,
+    )
 
-    command_bus.register_handler(
+
+def _build_controllers(buses: _RuntimeBuses) -> _RuntimeControllers:
+    outbound_controller = TelegramOutboundController()
+    text_controller = TelegramTextController(buses.command, buses.event)
+    document_controller = TelegramDocumentController(buses.command, buses.event)
+    command_controller = TelegramCommandController(buses.command)
+    callback_controller = TelegramCallbackController(buses.command)
+    return _RuntimeControllers(
+        text=text_controller,
+        document=document_controller,
+        command=command_controller,
+        callback=callback_controller,
+        outbound=outbound_controller,
+    )
+
+
+def _register_command_handlers(
+    buses: _RuntimeBuses,
+    services: _RuntimeServices,
+) -> None:
+    buses.command.register_handler(
         ProcessTextMessage,
         ProcessTextMessageHandler(
-            message_input_service,
-            prompt_builder_service,
-            event_bus,
-            weather_query_router_service,
-            weather_service,
-            weather_reply_formatter_service,
+            services.message_input,
+            services.agent_request_orchestrator,
+            buses.event,
+            services.weather_query_router,
+            services.weather,
+            services.weather_reply_formatter,
         ),
     )
-    command_bus.register_handler(
+    buses.command.register_handler(
         ProcessDocumentMessage,
         ProcessDocumentMessageHandler(
-            file_processing_service,
-            prompt_builder_service,
-            event_bus,
+            services.file_processing,
+            services.agent_request_orchestrator,
+            buses.event,
         ),
     )
-    command_bus.register_handler(
+    buses.command.register_handler(
         ListModels,
-        ListModelsHandler(model_runtime_service, event_bus),
+        ListModelsHandler(services.model_runtime, buses.event),
     )
-    command_bus.register_handler(
+    buses.command.register_handler(
         ShowRole,
-        ShowRoleHandler(role_runtime_service, event_bus),
+        ShowRoleHandler(services.role_runtime, buses.event),
     )
-    command_bus.register_handler(
+    buses.command.register_handler(
         UpdateRole,
-        UpdateRoleHandler(role_runtime_service, event_bus),
+        UpdateRoleHandler(services.role_runtime, buses.event),
     )
-    command_bus.register_handler(
+    buses.command.register_handler(
         SelectModel,
-        SelectModelHandler(model_runtime_service, event_bus),
+        SelectModelHandler(services.model_runtime, buses.event),
     )
 
-    event_bus.subscribe(
+
+def _register_event_subscribers(
+    buses: _RuntimeBuses,
+    services: _RuntimeServices,
+    controllers: _RuntimeControllers,
+) -> None:
+    buses.event.subscribe(
         AgentRunRequested,
         AgentRunWorkflow(
-            agent_execution_service,
-            response_service,
-            event_bus,
-            conversation_lock_service,
-            conversation_context_service,
+            services.agent_execution,
+            services.agent_response,
+            services.agent_tool_dispatcher,
+            buses.event,
+            services.conversation_lock,
+            services.conversation_context,
         ),
     )
-    event_bus.subscribe(
-        ToolExecutionRequested,
-        SearchWebToolHandler(response_service, search_web_service, event_bus),
-    )
-    event_bus.subscribe(
-        ToolExecutionRequested,
-        CalculatorToolHandler(response_service, calculator_service),
-    )
-    if history_event_subscriber is not None:
-        event_bus.subscribe(MessageReceived, history_event_subscriber)
-        event_bus.subscribe(ResponseGenerated, history_event_subscriber)
+    if services.history_event_subscriber is not None:
+        buses.event.subscribe(MessageReceived, services.history_event_subscriber)
+        buses.event.subscribe(ResponseGenerated, services.history_event_subscriber)
     for event_type in (
         StartTelegramResponseSession,
         ProgressUpdated,
@@ -293,74 +424,52 @@ def main() -> None:
         CallbackTextRequested,
         ModelListReady,
     ):
-        event_bus.subscribe(event_type, outbound_controller)
-
-    application = _build_application(
-        settings,
-        text_controller,
-        document_controller,
-        command_controller,
-        callback_controller,
-        ollama_client,
-        tavily_client,
-        nominatim_client,
-        wttr_client,
-        command_bus,
-        event_bus,
-    )
-    application.run_polling()
+        buses.event.subscribe(event_type, controllers.outbound)
 
 
 def _build_application(
     settings: Settings,
-    text_controller: TelegramTextController,
-    document_controller: TelegramDocumentController,
-    command_controller: TelegramCommandController,
-    callback_controller: TelegramCallbackController,
-    ollama_client: OllamaClient,
-    tavily_client: TavilyClient,
-    nominatim_client: NominatimClient,
-    wttr_client: WttrClient,
-    command_bus: InMemoryCommandBus,
-    event_bus: InMemoryEventBus,
+    controllers: _RuntimeControllers,
+    clients: _RuntimeClients,
+    buses: _RuntimeBuses,
 ) -> Application:
     builder = ApplicationBuilder()
     builder = builder.token(settings.telegram_bot_token)
     builder = builder.concurrent_updates(settings.telegram_concurrent_updates)
-    builder = builder.post_init(_build_startup_callback(command_bus, event_bus))
+    builder = builder.post_init(_build_startup_callback(buses.command, buses.event))
     builder = builder.post_shutdown(
         _build_shutdown_callback(
-            ollama_client,
-            tavily_client,
-            nominatim_client,
-            wttr_client,
-            command_bus,
-            event_bus,
+            clients.ollama,
+            clients.tavily,
+            clients.nominatim,
+            clients.wttr,
+            buses.command,
+            buses.event,
         ),
     )
     application = builder.build()
     application.add_handler(
-        CommandHandler(MODELS_COMMAND, command_controller.handle_models_command),
+        CommandHandler(MODELS_COMMAND, controllers.command.handle_models_command),
     )
     application.add_handler(
-        CommandHandler(ROLE_COMMAND, command_controller.handle_role_command),
+        CommandHandler(ROLE_COMMAND, controllers.command.handle_role_command),
     )
     application.add_handler(
         CallbackQueryHandler(
-            callback_controller.handle_model_selection,
+            controllers.callback.handle_model_selection,
             pattern=f"^{MODEL_CALLBACK_PREFIX}",
         ),
     )
     application.add_handler(
         MessageHandler(
             filters.Document.ALL,
-            document_controller.handle_document_message,
+            controllers.document.handle_document_message,
         ),
     )
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            text_controller.handle_text_message,
+            controllers.text.handle_text_message,
         ),
     )
     return application

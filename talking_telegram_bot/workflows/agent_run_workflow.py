@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from talking_telegram_bot.bus.envelope import MessageEnvelope
@@ -17,7 +16,6 @@ from talking_telegram_bot.messages.events import (
     ProgressUpdated,
     ReplyReady,
     ResponseGenerated,
-    ToolExecutionRequested,
     UserFacingErrorRaised,
 )
 from talking_telegram_bot.models.messages import ConversationMessage
@@ -26,6 +24,11 @@ from talking_telegram_bot.services.agent_execution_service import (
     AgentExecutionService,
 )
 from talking_telegram_bot.services.agent_response_service import AgentResponseService
+from talking_telegram_bot.services.agent_tool_dispatcher_service import (
+    AgentToolContext,
+    AgentToolDispatcherService,
+    AgentToolExecutionError,
+)
 from talking_telegram_bot.services.conversation_context_service import (
     ConversationContextError,
     ConversationContextService,
@@ -40,12 +43,14 @@ class AgentRunWorkflow:
         self,
         agent_execution_service: AgentExecutionService,
         response_service: AgentResponseService,
+        tool_dispatcher_service: AgentToolDispatcherService,
         event_bus: InMemoryEventBus,
         conversation_lock_service: ConversationLockService,
         conversation_context_service: ConversationContextService | None = None,
     ) -> None:
         self._agent_execution_service = agent_execution_service
         self._response_service = response_service
+        self._tool_dispatcher_service = tool_dispatcher_service
         self._event_bus = event_bus
         self._conversation_lock_service = conversation_lock_service
         self._conversation_context_service = conversation_context_service
@@ -160,7 +165,7 @@ class AgentRunWorkflow:
         tool_call = self._response_service.read_tool_call(payload)
         if tool_call is None:
             return AGENT_CONTINUE_PROMPT
-        if tool_call.action not in {"search_web", "calculator"}:
+        if not self._tool_dispatcher_service.can_execute(tool_call.action):
             log_event(
                 logger,
                 logging.WARNING,
@@ -183,25 +188,16 @@ class AgentRunWorkflow:
             user_id=envelope.user_id,
             tool_action=tool_call.action,
         )
-        response_future = self._create_response_future()
-        await self._event_bus.publish(
-            ToolExecutionRequested(
-                action=tool_call.action,
-                args=tool_call.args,
-                response_future=response_future,
-            ),
+        context = AgentToolContext(
             correlation_id=envelope.correlation_id,
             causation_id=envelope.message_id,
             chat_id=envelope.chat_id,
             user_id=envelope.user_id,
         )
         try:
-            return await response_future
-        except Exception as exc:
+            return await self._tool_dispatcher_service.execute_tool(tool_call, context)
+        except AgentToolExecutionError as exc:
             raise AgentExecutionError(str(exc)) from exc
-
-    def _create_response_future(self):
-        return asyncio.get_running_loop().create_future()
 
     async def _read_context_messages(
         self,

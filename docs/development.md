@@ -8,7 +8,7 @@
 |------|---------|
 | Run bot | `.venv/bin/python -m talking_telegram_bot` |
 | All tests | `PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v` |
-| One test module | `PYTHONPATH=. .venv/bin/python -m unittest tests.test_message_service -v` |
+| One test module | `PYTHONPATH=. .venv/bin/python -m unittest tests.test_agent_run_workflow -v` |
 
 ## Commit Attribution
 - AI commits must include:

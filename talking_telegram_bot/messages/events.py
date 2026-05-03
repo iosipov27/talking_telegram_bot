@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -64,10 +63,3 @@ class ModelListReady:
 class AgentRunRequested:
     system_prompt: str
     user_prompt: str
-
-
-@dataclass(slots=True)
-class ToolExecutionRequested:
-    action: str
-    args: dict[str, Any]
-    response_future: asyncio.Future[str] = field(repr=False)

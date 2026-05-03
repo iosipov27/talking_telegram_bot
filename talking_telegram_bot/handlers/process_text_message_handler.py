@@ -13,8 +13,6 @@ from talking_telegram_bot.constants.user_messages import (
 )
 from talking_telegram_bot.messages.commands import ProcessTextMessage
 from talking_telegram_bot.messages.events import (
-    AgentRunRequested,
-    MessageReceived,
     ProgressUpdated,
     ReplyReady,
     ResponseGenerated,
@@ -23,11 +21,13 @@ from talking_telegram_bot.messages.events import (
     UserFacingErrorRaised,
 )
 from talking_telegram_bot.logging_utils import log_event
+from talking_telegram_bot.services.agent_request_orchestrator_service import (
+    AgentRequestOrchestratorService,
+)
 from talking_telegram_bot.services.message_input_service import (
     MessageInputError,
     MessageInputService,
 )
-from talking_telegram_bot.services.prompt_builder_service import PromptBuilderService
 from talking_telegram_bot.services.weather_query_router_service import (
     WeatherQueryRouterService,
 )
@@ -43,14 +43,14 @@ class ProcessTextMessageHandler:
     def __init__(
         self,
         message_input_service: MessageInputService,
-        prompt_builder_service: PromptBuilderService,
+        agent_request_orchestrator_service: AgentRequestOrchestratorService,
         event_bus: InMemoryEventBus,
         weather_query_router_service: WeatherQueryRouterService,
         weather_service: WeatherService,
         weather_reply_formatter_service: WeatherReplyFormatterService,
     ) -> None:
         self._message_input_service = message_input_service
-        self._prompt_builder_service = prompt_builder_service
+        self._agent_request_orchestrator_service = agent_request_orchestrator_service
         self._event_bus = event_bus
         self._weather_query_router_service = weather_query_router_service
         self._weather_service = weather_service
@@ -92,7 +92,10 @@ class ProcessTextMessageHandler:
             user_id=envelope.user_id,
             text_length=len(user_prompt),
         )
-        await self._publish_message_received(envelope, user_prompt)
+        await self._agent_request_orchestrator_service.publish_message_received(
+            envelope,
+            user_prompt,
+        )
         weather_route = self._weather_query_router_service.route(user_prompt)
         if weather_route.should_route:
             log_event(
@@ -114,32 +117,12 @@ class ProcessTextMessageHandler:
             chat_id=envelope.chat_id,
             user_id=envelope.user_id,
         )
-        await self._event_bus.publish_and_wait(
-            StartTelegramResponseSession(message=envelope.message.message),
-            correlation_id=envelope.correlation_id,
-            causation_id=envelope.message_id,
-            chat_id=envelope.chat_id,
-            user_id=envelope.user_id,
-        )
         try:
-            log_event(
-                logger,
-                logging.INFO,
-                log_events.AGENT_RUN_REQUESTED,
-                trace_id=envelope.correlation_id,
-                chat_id=envelope.chat_id,
-                user_id=envelope.user_id,
-                source="text",
-            )
-            await self._event_bus.publish_and_wait(
-                AgentRunRequested(
-                    system_prompt=self._prompt_builder_service.build_system_prompt(),
-                    user_prompt=user_prompt,
-                ),
-                correlation_id=envelope.correlation_id,
-                causation_id=envelope.message_id,
-                chat_id=envelope.chat_id,
-                user_id=envelope.user_id,
+            await self._agent_request_orchestrator_service.start_agent_response(
+                envelope,
+                envelope.message.message,
+                user_prompt,
+                "text",
             )
         except Exception:
             log_event(
@@ -230,19 +213,6 @@ class ProcessTextMessageHandler:
         await self._publish_response_generated(envelope, reply_text)
         await self._event_bus.publish_and_wait(
             ReplyReady(text=reply_text),
-            correlation_id=envelope.correlation_id,
-            causation_id=envelope.message_id,
-            chat_id=envelope.chat_id,
-            user_id=envelope.user_id,
-        )
-
-    async def _publish_message_received(
-        self,
-        envelope: MessageEnvelope[ProcessTextMessage],
-        text: str,
-    ) -> None:
-        await self._event_bus.publish_and_wait(
-            MessageReceived(text=text),
             correlation_id=envelope.correlation_id,
             causation_id=envelope.message_id,
             chat_id=envelope.chat_id,
