@@ -166,7 +166,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(collector.replies, ["search complete"])
         await event_bus.stop()
 
-    async def test_workflow_logs_expected_agent_failure_as_warning(self) -> None:
+    async def test_workflow_logs_expected_agent_failure_as_error(self) -> None:
         event_bus = InMemoryEventBus(worker_count=4)
         response_service = AgentResponseService()
         agent_execution_service = AsyncMock()
@@ -188,7 +188,7 @@ class AgentRunWorkflowTestCase(unittest.IsolatedAsyncioTestCase):
 
         with self.assertLogs(
             "talking_telegram_bot.workflows.agent_run_workflow",
-            level="WARNING",
+            level="ERROR",
         ) as logs:
             await event_bus.publish_and_wait(
                 AgentRunRequested(system_prompt="system", user_prompt="user task"),

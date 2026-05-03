@@ -69,7 +69,7 @@ class AgentRunWorkflow:
             except AgentExecutionError as exc:
                 log_event(
                     logger,
-                    logging.WARNING,
+                    logging.ERROR,
                     "Agent workflow failed.",
                     trace_id=envelope.correlation_id,
                     chat_id=envelope.chat_id,
